@@ -1,0 +1,54 @@
+# Roadmap
+
+The engine is built from the bottom up: the arithmetic first, then the deal, then
+the schedule that makes an LBO an LBO, and finally the reporting that a deal team
+would actually read.
+
+## Phase 1 — Numerics core
+
+- [ ] Decimal money type with an explicit rounding policy
+- [ ] Day-count conventions (ACT/365F, ACT/360, 30/360 US, ACT/ACT ISDA)
+- [ ] Period grids: annual, semi-annual, quarterly, monthly, with end-of-month handling
+- [ ] Discounting, NPV, and a dated cash-flow stream
+- [ ] IRR by bracketed root-finding, XIRR for irregular dates, MoIC and CAGR
+
+## Phase 2 — The transaction
+
+- [ ] Entry valuation: enterprise value from an EBITDA multiple, the equity bridge
+- [ ] Sources and uses that balance exactly, with the sponsor equity as the plug
+- [ ] Transaction fees, financing fees and original issue discount
+- [ ] Opening balance sheet after the recapitalisation
+
+## Phase 3 — Operating model
+
+- [ ] Driver-based revenue and margin build
+- [ ] Depreciation, amortisation and capital expenditure schedules
+- [ ] Net working capital as a function of revenue, and the cash effect of its change
+- [ ] Cash taxes with net-operating-loss carryforward
+- [ ] Unlevered free cash flow
+
+## Phase 4 — Capital structure and the debt schedule
+
+- [ ] Tranche model: revolver, term loans, notes, mezzanine, seller paper
+- [ ] Mandatory amortisation, PIK accrual and cash interest
+- [ ] Cash sweep waterfall by seniority, with pro-rata treatment inside a class
+- [ ] Resolution of the interest/balance circularity by damped iteration
+
+## Phase 5 — Covenants
+
+- [ ] Leverage, interest coverage and fixed-charge coverage tests
+- [ ] Headroom measurement and breach detection with the period identified
+- [ ] Sweep percentages stepping with a leverage grid
+
+## Phase 6 — Returns
+
+- [ ] Exit valuation and the equity bridge at exit
+- [ ] IRR and MoIC per security, including preferred returns
+- [ ] Value-creation attribution: EBITDA growth, multiple change, debt paydown
+
+## Phase 7 — Analysis and reporting
+
+- [ ] Two-dimensional sensitivity grids over entry and exit assumptions
+- [ ] Command line over the whole engine
+- [ ] Investment committee report
+- [ ] Worked examples checked into the test suite
