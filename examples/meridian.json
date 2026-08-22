@@ -42,5 +42,21 @@
 
   "other_uses": [
     { "label": "Change of control payments", "amount": 18.5, "note": "management contracts" }
-  ]
+  ],
+
+  "projection": {
+    "years": 5,
+    "frequency": "annual"
+  },
+
+  "operating": {
+    "opening_revenue": 1480.0,
+    "revenue_growth": { "ramp": [0.085, 0.035] },
+    "ebitda_margin": { "ramp": [0.163, 0.188] },
+    "da_rate": { "constant": 0.036 },
+    "capex_rate": { "ramp": [0.048, 0.038] },
+    "nwc_rate": { "constant": 0.112 },
+    "tax_rate": 0.25,
+    "opening_carryforward": 0.0
+  }
 }

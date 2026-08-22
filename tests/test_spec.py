@@ -1,5 +1,6 @@
 import json
 from datetime import date
+from typing import Any
 from decimal import Decimal
 from pathlib import Path
 
@@ -19,20 +20,20 @@ def write(tmp_path: Path, payload: object, name: str = "deal.json") -> Path:
 
 class TestParsing:
     def test_minimal_deal(self) -> None:
-        name, close, deal = parse_deal(dict(MINIMAL))
-        assert name == "Untitled"
-        assert close is None
-        assert deal.valuation.enterprise_value == money(1000)
+        d = parse_deal(dict(MINIMAL))
+        assert d.name == "Untitled"
+        assert d.close_date is None
+        assert d.transaction.valuation.enterprise_value == money(1000)
 
     def test_name_and_close_date(self) -> None:
-        name, close, _ = parse_deal(
+        d = parse_deal(
             {**MINIMAL, "name": "Project Meridian", "close_date": "2026-06-30"}
         )
-        assert name == "Project Meridian"
-        assert close == date(2026, 6, 30)
+        assert d.name == "Project Meridian"
+        assert d.close_date == date(2026, 6, 30)
 
     def test_tranches_are_read_in_order(self) -> None:
-        _, _, deal = parse_deal(
+        d = parse_deal(
             {
                 **MINIMAL,
                 "debt": [
@@ -41,30 +42,30 @@ class TestParsing:
                 ],
             }
         )
-        assert [t.name for t in deal.debt] == ["TLB", "Notes"]
-        assert deal.debt[0].proceeds == money(398)
+        assert [t.name for t in d.transaction.debt] == ["TLB", "Notes"]
+        assert d.transaction.debt[0].proceeds == money(398)
 
     def test_tranche_defaults_to_par_with_no_fee(self) -> None:
-        _, _, deal = parse_deal({**MINIMAL, "debt": [{"name": "TLB", "face": 400}]})
-        assert deal.debt[0].issue_price == money(1)
-        assert deal.debt[0].financing_fee == money(0)
+        d = parse_deal({**MINIMAL, "debt": [{"name": "TLB", "face": 400}]})
+        assert d.transaction.debt[0].issue_price == money(1)
+        assert d.transaction.debt[0].financing_fee == money(0)
 
     def test_other_uses_are_read(self) -> None:
-        _, _, deal = parse_deal(
+        d = parse_deal(
             {**MINIMAL, "other_uses": [{"label": "Break fee", "amount": 12, "note": "payable"}]}
         )
-        assert deal.other_uses[0].label == "Break fee"
-        assert deal.other_uses[0].amount == money(12)
-        assert deal.other_uses[0].note == "payable"
+        assert d.transaction.other_uses[0].label == "Break fee"
+        assert d.transaction.other_uses[0].amount == money(12)
+        assert d.transaction.other_uses[0].note == "payable"
 
     def test_optional_amounts_default_to_zero(self) -> None:
-        _, _, deal = parse_deal(dict(MINIMAL))
-        assert deal.rollover_equity == money(0)
-        assert deal.transaction_fee_rate == money(0)
+        d = parse_deal(dict(MINIMAL))
+        assert d.transaction.rollover_equity == money(0)
+        assert d.transaction.transaction_fee_rate == money(0)
 
     def test_explicit_null_is_treated_as_absent(self) -> None:
-        _, _, deal = parse_deal({**MINIMAL, "rollover_equity": None})
-        assert deal.rollover_equity == money(0)
+        d = parse_deal({**MINIMAL, "rollover_equity": None})
+        assert d.transaction.rollover_equity == money(0)
 
 
 class TestExactness:
@@ -79,9 +80,9 @@ class TestExactness:
                 "debt": [{"name": "TLB", "face": 400000000, "issue_price": 0.995}],
             },
         )
-        _, _, deal = load_deal(path)
-        assert deal.debt[0].issue_price == Decimal("0.995")
-        assert deal.debt[0].proceeds == Decimal("398000000.000")
+        d = load_deal(path)
+        assert d.transaction.debt[0].issue_price == Decimal("0.995")
+        assert d.transaction.debt[0].proceeds == Decimal("398000000.000")
 
     def test_a_loaded_deal_still_balances_exactly(self, tmp_path: Path) -> None:
         path = write(
@@ -101,8 +102,8 @@ class TestExactness:
                 "transaction_fee_rate": 0.0137,
             },
         )
-        _, _, deal = load_deal(path)
-        table = deal.sources_and_uses()
+        d = load_deal(path)
+        table = d.transaction.sources_and_uses()
         assert table.total_sources - table.total_uses == money(0)
 
 
@@ -174,9 +175,9 @@ class TestLoadErrors:
 class TestShippedExample:
     def test_the_worked_example_loads_and_balances(self) -> None:
         path = Path(__file__).resolve().parents[1] / "examples" / "meridian.json"
-        name, close, deal = load_deal(path)
-        assert name == "Project Meridian"
-        assert close == date(2026, 6, 30)
+        d = load_deal(path)
+        assert d.name == "Project Meridian"
+        assert d.close_date == date(2026, 6, 30)
 
         # Checked by hand against the file:
         #   EV            240 x 11.5              = 2,760.00
@@ -187,31 +188,210 @@ class TestShippedExample:
         #   Txn fees      2,760 x 1.4%            =    38.64
         #   Uses          2,415 + 410 + 38.64 + 41.25 + 10.75 + 40 + 18.5 = 2,974.14
         #   Sources       1,850 + 85 + 45 + sponsor           -> sponsor =   994.14
-        assert deal.valuation.enterprise_value == money("2760.0")
-        assert deal.valuation.equity_purchase_price == money("2415.0")
-        assert deal.financing_fees == money("41.25")
-        assert deal.original_issue_discount == money("10.75")
-        assert deal.transaction_fees == money("38.64")
-        assert deal.sponsor_equity == money("994.14")
+        assert d.transaction.valuation.enterprise_value == money("2760.0")
+        assert d.transaction.valuation.equity_purchase_price == money("2415.0")
+        assert d.transaction.financing_fees == money("41.25")
+        assert d.transaction.original_issue_discount == money("10.75")
+        assert d.transaction.transaction_fees == money("38.64")
+        assert d.transaction.sponsor_equity == money("994.14")
 
-        table = deal.sources_and_uses()
+        table = d.transaction.sources_and_uses()
         assert table.total_uses == money("2974.14")
         assert table.total_sources == money("2974.14")
 
     def test_the_worked_example_entry_metrics(self) -> None:
         path = Path(__file__).resolve().parents[1] / "examples" / "meridian.json"
-        _, _, deal = load_deal(path)
-        assert deal.total_debt == money("1850.0")
-        assert deal.entry_leverage == money("1850.0") / money("240.0")
-        assert round(float(deal.entry_leverage), 2) == 7.71
-        assert deal.total_capitalisation == money("2929.14")
-        assert round(float(deal.equity_contribution_rate), 4) == 0.3684
-        assert round(float(deal.sponsor_ownership), 4) == 0.9212
+        d = load_deal(path)
+        assert d.transaction.total_debt == money("1850.0")
+        assert d.transaction.entry_leverage == money("1850.0") / money("240.0")
+        assert round(float(d.transaction.entry_leverage), 2) == 7.71
+        assert d.transaction.total_capitalisation == money("2929.14")
+        assert round(float(d.transaction.equity_contribution_rate), 4) == 0.3684
+        assert round(float(d.transaction.sponsor_ownership), 4) == 0.9212
 
     def test_the_undrawn_revolver_is_left_off_the_sources_side(self) -> None:
         path = Path(__file__).resolve().parents[1] / "examples" / "meridian.json"
-        _, _, deal = load_deal(path)
-        labels = [i.label for i in deal.sources_and_uses().sources]
+        d = load_deal(path)
+        labels = [i.label for i in d.transaction.sources_and_uses().sources]
         assert "Revolving credit facility" not in labels
         # ...but it is still part of the structure.
-        assert any(t.name == "Revolving credit facility" for t in deal.debt)
+        assert any(t.name == "Revolving credit facility" for t in d.transaction.debt)
+
+
+PROJECTED: dict[str, Any] = {
+    "close_date": "2026-06-30",
+    "entry": {"ltm_ebitda": 100, "multiple": 10},
+    "projection": {"years": 5},
+    "operating": {
+        "opening_revenue": 1000,
+        "revenue_growth": 0.08,
+        "ebitda_margin": 0.20,
+        "da_rate": 0.04,
+        "capex_rate": 0.05,
+        "nwc_rate": 0.15,
+        "tax_rate": 0.25,
+    },
+}
+
+
+class TestProjectionParsing:
+    def test_a_deal_without_a_projection_says_so(self) -> None:
+        d = parse_deal(dict(MINIMAL))
+        assert not d.has_projection
+        with pytest.raises(DealSpecError, match="no operating case"):
+            d.project()
+
+    def test_a_projected_deal_runs(self) -> None:
+        d = parse_deal(dict(PROJECTED))
+        assert d.has_projection
+        model = d.project()
+        assert len(model) == 5
+        assert model[0].revenue == money(1080)
+        assert model[0].unlevered_free_cash_flow == money("106.80")
+
+    def test_frequency_defaults_to_annual(self) -> None:
+        assert len(parse_deal(dict(PROJECTED)).project()) == 5
+
+    def test_quarterly_projection(self) -> None:
+        payload = {**PROJECTED, "projection": {"years": 3, "frequency": "quarterly"}}
+        assert len(parse_deal(payload).project()) == 12
+
+    def test_projection_needs_a_close_date(self) -> None:
+        payload = {k: v for k, v in PROJECTED.items() if k != "close_date"}
+        with pytest.raises(DealSpecError, match="close date is required"):
+            parse_deal(payload)
+
+    def test_an_unknown_frequency_lists_the_valid_ones(self) -> None:
+        payload = {**PROJECTED, "projection": {"years": 5, "frequency": "fortnightly"}}
+        with pytest.raises(DealSpecError, match="unknown frequency"):
+            parse_deal(payload)
+
+    def test_projection_without_operating_is_rejected(self) -> None:
+        payload = {k: v for k, v in PROJECTED.items() if k != "operating"}
+        with pytest.raises(DealSpecError, match="'operating' is missing"):
+            parse_deal(payload)
+
+    def test_operating_without_projection_is_rejected(self) -> None:
+        payload = {k: v for k, v in PROJECTED.items() if k != "projection"}
+        with pytest.raises(DealSpecError, match="'projection' is missing"):
+            parse_deal(payload)
+
+    def test_missing_opening_revenue(self) -> None:
+        operating = {
+            k: v for k, v in PROJECTED["operating"].items() if k != "opening_revenue"
+        }
+        payload = {**PROJECTED, "operating": operating}
+        with pytest.raises(DealSpecError, match="missing required field 'opening_revenue'"):
+            parse_deal(payload)
+
+    def test_years_must_be_a_whole_number(self) -> None:
+        payload = {**PROJECTED, "projection": {"years": "five"}}
+        with pytest.raises(DealSpecError, match="not a whole number"):
+            parse_deal(payload)
+
+    def test_zero_years_is_rejected(self) -> None:
+        payload = {**PROJECTED, "projection": {"years": 0}}
+        with pytest.raises(DealSpecError, match="at least one year"):
+            parse_deal(payload)
+
+
+class TestDriverParsing:
+    def _run(self, growth: object, years: int = 5) -> list[Decimal]:
+        payload = {
+            **PROJECTED,
+            "projection": {"years": years},
+            "operating": {**PROJECTED["operating"], "revenue_growth": growth},
+        }
+        return list(parse_deal(payload).operating.revenue_growth)  # type: ignore[union-attr]
+
+    def test_a_bare_number_is_constant(self) -> None:
+        assert self._run(0.08) == [money("0.08")] * 5
+
+    def test_an_explicit_list(self) -> None:
+        assert self._run([0.10, 0.09, 0.08, 0.07, 0.06])[0] == money("0.10")
+
+    def test_a_short_list_holds_its_final_value(self) -> None:
+        assert self._run([0.10, 0.05]) == [money("0.10")] + [money("0.05")] * 4
+
+    def test_constant_object(self) -> None:
+        assert self._run({"constant": 0.07}) == [money("0.07")] * 5
+
+    def test_ramp_object(self) -> None:
+        assert self._run({"ramp": [0.09, 0.03]}) == [
+            money("0.09"),
+            money("0.075"),
+            money("0.06"),
+            money("0.045"),
+            money("0.03"),
+        ]
+
+    def test_values_object(self) -> None:
+        assert self._run({"values": [0.10, 0.05]})[0] == money("0.10")
+
+    def test_a_ramp_needs_exactly_two_ends(self) -> None:
+        with pytest.raises(DealSpecError, match="exactly two values"):
+            self._run({"ramp": [0.09, 0.06, 0.03]})
+
+    def test_an_empty_series_is_rejected(self) -> None:
+        with pytest.raises(DealSpecError, match="says nothing"):
+            self._run([])
+
+    def test_an_unknown_driver_shape_lists_the_valid_ones(self) -> None:
+        with pytest.raises(DealSpecError, match="'constant', 'ramp' or 'values'"):
+            self._run({"trend": 0.05})
+
+    def test_a_bad_number_inside_a_driver_names_the_field(self) -> None:
+        with pytest.raises(DealSpecError, match="operating.revenue_growth: not a number"):
+            self._run("brisk")
+
+    def test_omitted_rates_default_to_zero(self) -> None:
+        payload = {
+            **PROJECTED,
+            "operating": {
+                "opening_revenue": 1000,
+                "revenue_growth": 0,
+                "ebitda_margin": 0.2,
+            },
+        }
+        model = parse_deal(payload).project()
+        assert model[0].capital_expenditure == money(0)
+        assert model[0].depreciation_and_amortisation == money(0)
+        assert model[0].tax.cash_tax == money(0)
+
+
+class TestShippedExampleProjection:
+    def test_the_example_projects(self) -> None:
+        path = Path(__file__).resolve().parents[1] / "examples" / "meridian.json"
+        d = load_deal(path)
+        assert d.has_projection
+        model = d.project()
+
+        # Period one, computed by hand from the file:
+        #   revenue  1,480.00 x 1.085          = 1,605.80
+        #   EBITDA   1,605.80 x 0.163          =   261.7454
+        #   D&A      1,605.80 x 0.036          =    57.8088
+        #   EBIT                               =   203.9366
+        #   tax      203.9366 x 0.25           =    50.98415
+        #   capex    1,605.80 x 0.048          =    77.0784
+        #   NWC      1,605.80 x 0.112 = 179.8496, opening 165.76, so +14.0896
+        #   UFCF     152.95245 + 57.8088 - 77.0784 - 14.0896 = 119.59325
+        p = model[0]
+        assert p.revenue == money("1605.80")
+        assert p.ebitda == money("261.7454")
+        assert p.depreciation_and_amortisation == money("57.8088")
+        assert p.ebit == money("203.9366")
+        assert p.tax.cash_tax == money("50.98415")
+        assert p.capital_expenditure == money("77.0784")
+        assert model.opening_net_working_capital == money("165.76")
+        assert p.change_in_net_working_capital == money("14.0896")
+        assert p.unlevered_free_cash_flow == money("119.59325")
+
+    def test_the_operating_case_is_coherent_with_the_entry_multiple(self) -> None:
+        # The margin the deal is priced on and the margin the case opens at
+        # should be within a whisker of each other, or the two halves of the
+        # file are describing different businesses.
+        path = Path(__file__).resolve().parents[1] / "examples" / "meridian.json"
+        d = load_deal(path)
+        model = d.project()
+        implied_ltm_margin = d.transaction.valuation.ltm_ebitda / model.opening_revenue
+        assert abs(implied_ltm_margin - model[0].ebitda_margin) < money("0.005")

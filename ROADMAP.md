@@ -22,11 +22,12 @@ would actually read.
 
 ## Phase 3 — Operating model
 
-- [ ] Driver-based revenue and margin build
-- [ ] Depreciation, amortisation and capital expenditure schedules
-- [ ] Net working capital as a function of revenue, and the cash effect of its change
-- [ ] Cash taxes with net-operating-loss carryforward
-- [ ] Unlevered free cash flow
+- [x] Driver series: constants, explicit values, and ramps between two points
+- [x] Driver-based revenue and margin build
+- [x] Depreciation, amortisation and capital expenditure schedules
+- [x] Net working capital as a function of revenue, and the cash effect of its change
+- [x] Cash taxes with net-operating-loss carryforward, including the usage cap
+- [x] Unlevered free cash flow
 
 ## Phase 4 — Capital structure and the debt schedule
 

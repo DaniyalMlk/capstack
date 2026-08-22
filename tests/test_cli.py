@@ -189,3 +189,83 @@ class TestDealCommand:
         out = capsys.readouterr().out
         assert code == 0
         assert "distribution at close" in out
+
+
+class TestProjectCommand:
+    @pytest.fixture()
+    def example(self) -> str:
+        return str(Path(__file__).resolve().parents[1] / "examples" / "meridian.json")
+
+    def test_prints_the_operating_case(
+        self, example: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        code = main(["project", example])
+        out = capsys.readouterr().out
+        assert code == 0
+        assert "Unlevered free cash flow" in out
+        assert "1,605.80" in out  # period one revenue
+        assert "119.59" in out  # period one unlevered FCF
+
+    def test_outflows_are_shown_negative(
+        self, example: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        main(["project", example])
+        out = capsys.readouterr().out
+        capex = next(ln for ln in out.splitlines() if "Capital expenditure" in ln)
+        assert "-77.08" in capex
+
+    def test_every_period_gets_a_column(
+        self, example: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        main(["project", example])
+        out = capsys.readouterr().out
+        heading = next(ln for ln in out.splitlines() if "P1" in ln)
+        assert heading.split() == ["P1", "P2", "P3", "P4", "P5"]
+
+    def test_json_output(self, example: str, capsys: pytest.CaptureFixture[str]) -> None:
+        code = main(["project", example, "--json"])
+        payload = json.loads(capsys.readouterr().out)
+        assert code == 0
+        assert len(payload["periods"]) == 5
+        assert payload["periods"][0]["revenue"] == "1605.80"
+        assert payload["periods"][0]["unlevered_free_cash_flow"] == "119.59"
+        assert payload["totals"]["exit_ebitda"] == "372.09"
+
+    def test_a_deal_without_an_operating_case_explains_itself(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        path = tmp_path / "funding-only.json"
+        path.write_text(
+            json.dumps({"name": "Bare", "entry": {"ltm_ebitda": 100, "multiple": 10}}),
+            encoding="utf-8",
+        )
+        code = main(["project", str(path)])
+        assert code == 1
+        assert "no operating case" in capsys.readouterr().err
+
+    def test_a_loss_making_case_reports_carried_forward_losses(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        path = tmp_path / "loss.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "name": "Underwater",
+                    "close_date": "2026-06-30",
+                    "entry": {"ltm_ebitda": 100, "multiple": 10},
+                    "projection": {"years": 3},
+                    "operating": {
+                        "opening_revenue": 1000,
+                        "revenue_growth": 0.02,
+                        "ebitda_margin": 0.01,
+                        "da_rate": 0.05,
+                        "tax_rate": 0.25,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        code = main(["project", str(path)])
+        out = capsys.readouterr().out
+        assert code == 0
+        assert "Losses carried forward" in out
