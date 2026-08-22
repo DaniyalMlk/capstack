@@ -6,11 +6,11 @@ would actually read.
 
 ## Phase 1 — Numerics core
 
-- [ ] Decimal money type with an explicit rounding policy
-- [ ] Day-count conventions (ACT/365F, ACT/360, 30/360 US, ACT/ACT ISDA)
-- [ ] Period grids: annual, semi-annual, quarterly, monthly, with end-of-month handling
-- [ ] Discounting, NPV, and a dated cash-flow stream
-- [ ] IRR by bracketed root-finding, XIRR for irregular dates, MoIC and CAGR
+- [x] Decimal money type with an explicit rounding policy
+- [x] Day-count conventions (ACT/365F, ACT/360, 30/360 US, ACT/ACT ISDA)
+- [x] Period grids: annual, semi-annual, quarterly, monthly, with end-of-month handling
+- [x] Discounting, NPV, and a dated cash-flow stream
+- [x] IRR by bracketed root-finding, XIRR for irregular dates, MoIC and CAGR
 
 ## Phase 2 — The transaction
 
