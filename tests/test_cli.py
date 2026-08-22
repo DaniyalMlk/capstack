@@ -1,5 +1,6 @@
 import json
 from datetime import date
+from pathlib import Path
 
 import pytest
 
@@ -117,3 +118,74 @@ class TestParser:
     def test_unknown_command_is_rejected(self) -> None:
         with pytest.raises(SystemExit):
             build_parser().parse_args(["nonsense"])
+
+
+class TestDealCommand:
+    @pytest.fixture()
+    def example(self) -> str:
+        return str(Path(__file__).resolve().parents[1] / "examples" / "meridian.json")
+
+    def test_prints_a_balanced_funding_table(
+        self, example: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        code = main(["deal", example])
+        out = capsys.readouterr().out
+        assert code == 0
+        assert "Project Meridian" in out
+        assert out.count("2,974.14") == 2  # the two totals agree
+        assert "7.71x" in out
+
+    def test_json_output(self, example: str, capsys: pytest.CaptureFixture[str]) -> None:
+        code = main(["deal", example, "--json"])
+        payload = json.loads(capsys.readouterr().out)
+        assert code == 0
+        assert payload["balanced"] is True
+        assert payload["total_sources"] == payload["total_uses"]
+        assert payload["metrics"]["sponsor_equity"] == "994.14"
+        assert payload["metrics"]["overfunded"] is False
+
+    def test_sources_and_uses_columns_line_up(
+        self, example: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        main(["deal", example])
+        out = capsys.readouterr().out
+        funding = out.split("Entry metrics")[0]
+        totals = [ln for ln in funding.splitlines() if ln.strip().startswith("Total ")]
+        assert len(totals) == 2
+        # Identical strings means identical column positions.
+        assert totals[0] == totals[1]
+
+    def test_a_missing_file_exits_with_one(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        code = main(["deal", "/nonexistent/deal.json"])
+        assert code == 1
+        assert "cannot read" in capsys.readouterr().err
+
+    def test_a_malformed_file_exits_with_one(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        path = tmp_path / "bad.json"
+        path.write_text("{not json}", encoding="utf-8")
+        code = main(["deal", str(path)])
+        assert code == 1
+        assert "invalid JSON" in capsys.readouterr().err
+
+    def test_an_overfunded_deal_is_called_out(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        path = tmp_path / "over.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "name": "Overreach",
+                    "entry": {"ltm_ebitda": 100, "multiple": 5},
+                    "debt": [{"name": "TLB", "face": 600}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        code = main(["deal", str(path)])
+        out = capsys.readouterr().out
+        assert code == 0
+        assert "distribution at close" in out
