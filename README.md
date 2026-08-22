@@ -7,9 +7,11 @@ for, how the purchase is funded, what the operating case throws off, how the deb
 gets paid down, whether the covenants hold, and what the sponsor makes on the way
 out.
 
-Status: early. The numerics layer and the transaction are in — exact money, day
-counts, period grids, the return measures, and a sources and uses table that
-balances. See [ROADMAP.md](ROADMAP.md) for what is next.
+Status: early. Three layers are in — the numerics (exact money, day counts,
+period grids, the return measures), the transaction (entry valuation and a
+sources and uses table that balances), and the operating case (drivers through
+to unlevered free cash flow). The debt schedule is next; see
+[ROADMAP.md](ROADMAP.md).
 
 ## Install
 
@@ -79,7 +81,37 @@ Project Meridian   (close 2026-06-30)
     Total capitalisation              2,929.14
 ```
 
-See [`examples/meridian.json`](examples/meridian.json) for the input.
+The same file carries the operating case:
+
+```console
+$ capstack project examples/meridian.json
+Project Meridian - operating case
+=================================
+
+                                       P1        P2        P3        P4        P5
+                                  2027-06   2028-06   2029-06   2030-06   2031-06
+  -------------------------------------------------------------------------------
+  Revenue                        1,605.80  1,722.22  1,825.55  1,912.27  1,979.20
+  EBITDA                           261.75    291.49    320.38    347.55    372.09
+  Depreciation & amortisation       57.81     62.00     65.72     68.84     71.25
+  EBIT                             203.94    229.49    254.66    278.71    300.84
+
+  Cash tax                         -50.98    -57.37    -63.67    -69.68    -75.21
+  NOPAT                            152.95    172.11    191.00    209.03    225.63
+
+  Add back D&A                      57.81     62.00     65.72     68.84     71.25
+  Capital expenditure              -77.08    -78.36    -78.50    -77.45    -75.21
+  Change in working capital        -14.09    -13.04    -11.57     -9.71     -7.50
+  Unlevered free cash flow         119.59    142.71    166.65    190.72    214.17
+
+  EBITDA margin                     16.3%     16.9%     17.5%     18.2%     18.8%
+  Cash conversion                   45.7%     49.0%     52.0%     54.9%     57.6%
+```
+
+See [`examples/meridian.json`](examples/meridian.json) for the input. Assumption
+series are written the way an operating case is actually described — a bare
+number for something flat, `{"ramp": [0.085, 0.035]}` for growth that tapers, or
+a list when the years genuinely differ.
 
 ## Test
 
@@ -123,6 +155,18 @@ with the seller, and equity fills whatever gap is left. When that residual comes
 out negative the structure is funding itself entirely out of its own borrowing
 capacity and paying the sponsor a distribution at close. That is aggressive, not
 invalid, so the model labels it rather than refusing it.
+
+**Working capital reaches cash flow as a movement, not a level.** A business
+growing at 8% with working capital steady at 15% of revenue consumes cash every
+single period, because the balance is rising and the increase has to be funded —
+even though the ratio never moves. Subtracting the balance rather than the change
+is the classic error, and it understates cash flow by an order of magnitude.
+
+**A loss carryforward cannot shelter everything.** The pool is capped at a
+percentage of taxable income — 80% by default, matching the limitation on US
+losses arising from 2018 onward — so a company with large historic losses still
+writes a cheque the moment it turns profitable. Modelling the pool without the
+cap overstates cash in precisely the years a sponsor is counting on it.
 
 **Debt is carried at face, not at proceeds.** A tranche placed at 99.5 raises
 99.5 and owes 100. The half-point is a use of funds. Carrying the tranche at
