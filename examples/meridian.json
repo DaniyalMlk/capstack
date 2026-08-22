@@ -1,0 +1,46 @@
+{
+  "name": "Project Meridian",
+  "close_date": "2026-06-30",
+
+  "entry": {
+    "ltm_ebitda": 240.0,
+    "multiple": 11.5,
+    "existing_debt": 410.0,
+    "existing_cash": 65.0
+  },
+
+  "debt": [
+    {
+      "name": "Revolving credit facility",
+      "face": 0.0,
+      "financing_fee_rate": 0.0075
+    },
+    {
+      "name": "Term Loan B",
+      "face": 1150.0,
+      "issue_price": 0.995,
+      "financing_fee_rate": 0.0225
+    },
+    {
+      "name": "Senior secured notes",
+      "face": 450.0,
+      "issue_price": 1.0,
+      "financing_fee_rate": 0.0175
+    },
+    {
+      "name": "Second lien",
+      "face": 250.0,
+      "issue_price": 0.98,
+      "financing_fee_rate": 0.03
+    }
+  ],
+
+  "rollover_equity": 85.0,
+  "cash_from_balance_sheet": 45.0,
+  "cash_to_balance_sheet": 40.0,
+  "transaction_fee_rate": 0.014,
+
+  "other_uses": [
+    { "label": "Change of control payments", "amount": 18.5, "note": "management contracts" }
+  ]
+}
