@@ -17,7 +17,7 @@ from typing import Any, Sequence
 from .daycount import DayCount
 from .money import quantize
 from .returns import AmbiguousIRR, CashFlow, CashFlowStream, IRRError
-from .spec import DealSpecError, load_deal
+from .spec import Deal, DealSpecError, load_deal
 from .transaction import Transaction
 
 __all__ = ["main"]
@@ -221,9 +221,134 @@ def _print_deal(report: dict[str, Any]) -> None:
         print("    sponsor takes a distribution at close rather than writing a cheque.")
 
 
+_PROJECTION_ROWS: tuple[tuple[str, str], ...] = (
+    ("Revenue", "revenue"),
+    ("EBITDA", "ebitda"),
+    ("Depreciation & amortisation", "depreciation_and_amortisation"),
+    ("EBIT", "ebit"),
+    ("Cash tax", "cash_tax"),
+    ("NOPAT", "nopat"),
+    ("Add back D&A", "depreciation_and_amortisation"),
+    ("Capital expenditure", "capital_expenditure"),
+    ("Change in working capital", "change_in_net_working_capital"),
+    ("Unlevered free cash flow", "unlevered_free_cash_flow"),
+)
+
+#: Rows shown as an outflow, so each column reads the way the arithmetic runs
+#: down the page rather than requiring the reader to remember the signs.
+_NEGATED_ROWS = frozenset({"Capital expenditure", "Change in working capital", "Cash tax"})
+
+#: Rows after which a blank line separates one subtotal block from the next.
+_RULED_ROWS = frozenset({"EBIT", "NOPAT"})
+
+
+def _projection_report(deal: Deal) -> dict[str, Any]:
+    model = deal.project()
+    return {
+        "name": deal.name,
+        "opening_revenue": _amount_str(model.opening_revenue),
+        "opening_net_working_capital": _amount_str(model.opening_net_working_capital),
+        "periods": [
+            {
+                "index": p.index,
+                "ending": p.period.end.isoformat(),
+                "revenue": _amount_str(p.revenue),
+                "ebitda": _amount_str(p.ebitda),
+                "ebitda_margin": float(p.ebitda_margin),
+                "depreciation_and_amortisation": _amount_str(p.depreciation_and_amortisation),
+                "ebit": _amount_str(p.ebit),
+                "taxable_income": _amount_str(p.tax.taxable_income),
+                "loss_relief_used": _amount_str(p.tax.loss_relief_used),
+                "cash_tax": _amount_str(p.tax.cash_tax),
+                "closing_carryforward": _amount_str(p.tax.closing_carryforward),
+                "nopat": _amount_str(p.nopat),
+                "capital_expenditure": _amount_str(p.capital_expenditure),
+                "net_working_capital": _amount_str(p.net_working_capital),
+                "change_in_net_working_capital": _amount_str(p.change_in_net_working_capital),
+                "unlevered_free_cash_flow": _amount_str(p.unlevered_free_cash_flow),
+                "cash_conversion": float(p.cash_conversion),
+            }
+            for p in model
+        ],
+        "totals": {
+            "entry_ebitda": _amount_str(model.entry_ebitda),
+            "exit_ebitda": _amount_str(model.exit_ebitda),
+            "unlevered_free_cash_flow": _amount_str(model.total_unlevered_free_cash_flow),
+            "cash_tax": _amount_str(model.total_cash_tax),
+            "capital_expenditure": _amount_str(model.total_capital_expenditure),
+            "working_capital_absorbed": _amount_str(model.working_capital_absorbed),
+            "closing_carryforward": _amount_str(model.closing_carryforward),
+        },
+    }
+
+
+def _print_projection(report: dict[str, Any]) -> None:
+    periods = report["periods"]
+    header = f"{report['name']} - operating case"
+    print(header)
+    print("=" * len(header))
+    print()
+
+    label_width = max(len(label) for label, _ in _PROJECTION_ROWS) + 2
+    widest = max(
+        len(_format_money(Decimal(p[key]))) for p in periods for _, key in _PROJECTION_ROWS
+    )
+    column = max(widest, 7) + 2
+
+    def row(label: str, cells: list[str]) -> str:
+        return "  " + label.ljust(label_width) + "".join(c.rjust(column) for c in cells)
+
+    print(row("", [f"P{p['index']}" for p in periods]))
+    print(row("", [p["ending"][:7] for p in periods]))
+    print("  " + "-" * (label_width + column * len(periods)))
+
+    for label, key in _PROJECTION_ROWS:
+        cells = []
+        for p in periods:
+            value = Decimal(p[key])
+            if label in _NEGATED_ROWS:
+                value = -value
+            cells.append(_format_money(value))
+        print(row(label, cells))
+        if label in _RULED_ROWS:
+            print()
+
+    print()
+    print(row("EBITDA margin", [f"{p['ebitda_margin']:.1%}" for p in periods]))
+    print(row("Cash conversion", [f"{p['cash_conversion']:.1%}" for p in periods]))
+
+    totals = report["totals"]
+    print()
+    print("  Across the hold")
+    for label, key in (
+        ("Entry EBITDA", "entry_ebitda"),
+        ("Exit EBITDA", "exit_ebitda"),
+        ("Cumulative unlevered FCF", "unlevered_free_cash_flow"),
+        ("Cash tax paid", "cash_tax"),
+        ("Capital expenditure", "capital_expenditure"),
+        ("Working capital absorbed", "working_capital_absorbed"),
+    ):
+        print(f"    {label:<28}{_format_money(Decimal(totals[key])):>14}")
+    if Decimal(totals["closing_carryforward"]) > 0:
+        print(
+            f"    {'Losses carried forward':<28}"
+            f"{_format_money(Decimal(totals['closing_carryforward'])):>14}"
+        )
+
+
+def _cmd_project(args: argparse.Namespace) -> int:
+    deal = load_deal(args.file)
+    report = _projection_report(deal)
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        _print_projection(report)
+    return 0
+
+
 def _cmd_deal(args: argparse.Namespace) -> int:
-    name, close, deal = load_deal(args.file)
-    report = _deal_report(name, close, deal)
+    deal = load_deal(args.file)
+    report = _deal_report(deal.name, deal.close_date, deal.transaction)
     if args.json:
         print(json.dumps(report, indent=2))
     else:
@@ -273,6 +398,18 @@ def build_parser() -> argparse.ArgumentParser:
     deal.add_argument("file", help="path to a deal file (JSON)")
     deal.add_argument("--json", action="store_true", help="emit JSON instead of a table")
     deal.set_defaults(handler=_cmd_deal)
+
+    project = sub.add_parser(
+        "project",
+        help="the operating case, from revenue to unlevered free cash flow",
+        description=(
+            "Run the operating case in a deal file and print the projection, "
+            "before any of it is claimed by lenders."
+        ),
+    )
+    project.add_argument("file", help="path to a deal file (JSON)")
+    project.add_argument("--json", action="store_true", help="emit JSON instead of a table")
+    project.set_defaults(handler=_cmd_project)
 
     return parser
 
