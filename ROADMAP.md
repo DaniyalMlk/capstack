@@ -14,9 +14,10 @@ would actually read.
 
 ## Phase 2 — The transaction
 
-- [ ] Entry valuation: enterprise value from an EBITDA multiple, the equity bridge
-- [ ] Sources and uses that balance exactly, with the sponsor equity as the plug
-- [ ] Transaction fees, financing fees and original issue discount
+- [x] Entry valuation: enterprise value from an EBITDA multiple, the equity bridge
+- [x] Sources and uses that balance exactly, with the sponsor equity as the plug
+- [x] Transaction fees, financing fees and original issue discount
+- [x] Deal files, so a transaction can be described once and reused
 - [ ] Opening balance sheet after the recapitalisation
 
 ## Phase 3 — Operating model
