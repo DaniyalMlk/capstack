@@ -642,7 +642,7 @@ class TestShippedExampleSchedule:
         for period in schedule:
             assert period.reconciles()
             for row in period.tranches:
-                assert row.reconciles
+                assert row.reconciles()
 
         # The structure deleverages: 7.71x going in, comfortably below that
         # coming out, and the second lien is larger at the end than it started

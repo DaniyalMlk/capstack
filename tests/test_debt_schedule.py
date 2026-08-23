@@ -1,3 +1,4 @@
+import random
 from datetime import date
 from decimal import Decimal
 
@@ -532,12 +533,36 @@ class TestTheCircularity:
         with pytest.raises(CircularityNotResolved, match="did not settle within 2 iterations"):
             DebtSchedule.run(s, [YEAR], [200])
 
-    def test_a_shortened_step_is_reported(self) -> None:
+    def test_a_realistic_structure_settles_at_a_full_step(self) -> None:
+        # The halving is insurance, not the mechanism. If a plain structure
+        # starts needing shortened steps, something has made the map far less
+        # contractive than the coupon alone implies, and that is worth knowing.
         s = structure(
-            fixed("Term Loan B", TrancheKind.TERM_LOAN, 100, cash_rate="0.08", swept=True),
+            fixed("Revolver", TrancheKind.REVOLVER, 20, cash_rate="0.035", commitment=100),
+            fixed(
+                "Term Loan B",
+                TrancheKind.TERM_LOAN,
+                800,
+                cash_rate="0.055",
+                amortisation=Driver.constant("0.01", 5),
+                swept=True,
+            ),
+            fixed("Mezzanine", TrancheKind.MEZZANINE, 200, cash_rate="0.05", pik_rate="0.05"),
+            minimum_cash=25,
         )
-        schedule = DebtSchedule.run(s, [YEAR], [30])
-        assert schedule.shortest_step_taken <= money(1)
+        schedule = DebtSchedule.run(s, one_year_grid(5), [120, 140, 160, 180, 200])
+        assert schedule.shortest_step_taken == money(1)
+        assert schedule.max_iterations_used <= 15
+
+    def test_accretion_past_the_pole_is_refused_rather_than_guessed_at(self) -> None:
+        # The fixed point C = B(1 + k/2)/(1 - k/2) has a pole at k = 2. Nothing
+        # sensible lies on the other side of it, and no amount of iterating gets
+        # there, so the engine says so.
+        s = structure(
+            fixed("Seller note", TrancheKind.SELLER_NOTE, 100, pik_rate="2.00"),
+        )
+        with pytest.raises(CircularityNotResolved, match="accreting faster"):
+            DebtSchedule.run(s, [YEAR], [0])
 
 
 class TestReconciliation:
@@ -586,7 +611,7 @@ class TestReconciliation:
     def test_every_tranche_rolls_forward(self, schedule: DebtSchedule) -> None:
         for period in schedule:
             for row in period.tranches:
-                assert row.reconciles, f"{row.name} in period {period.index}"
+                assert row.reconciles(), f"{row.name} in period {period.index}"
 
     def test_every_period_reconciles_on_cash(self, schedule: DebtSchedule) -> None:
         for period in schedule:
@@ -710,3 +735,76 @@ class TestExactness:
         row = DebtSchedule.run(s, [YEAR], ["123.45"])[0]
         assert row.sweep_repayment == money("123.45")
         assert row.closing_debt == money("476.55")
+
+
+class TestInvariantsUnderRandomStructures:
+    """The reconciliations have to hold for structures nobody thought about.
+
+    A fixed seed, so a failure is reproducible and a regression does not depend
+    on which day the suite runs.
+    """
+
+    @staticmethod
+    def _case(rng: random.Random, periods: int) -> tuple[CapitalStructure, list[Money], Money]:
+        def rate(low: float, high: float) -> Money:
+            return money(str(round(rng.uniform(low, high), 4)))
+
+        tranches = [
+            Tranche.of(
+                "Revolver",
+                TrancheKind.REVOLVER,
+                0,
+                cash_rate=rate(0.01, 0.06),
+                commitment=rng.randint(20, 200),
+                undrawn_fee="0.005",
+            ),
+            Tranche.of(
+                "Term Loan B",
+                TrancheKind.TERM_LOAN,
+                rng.randint(100, 1500),
+                cash_rate=rate(0.02, 0.08),
+                floor="0.01",
+                amortisation=Driver.constant(rate(0, 0.10), periods),
+            ),
+            Tranche.of(
+                "Mezzanine",
+                TrancheKind.MEZZANINE,
+                rng.randint(0, 400),
+                cash_rate=rate(0, 0.10),
+                pik_rate=rate(0, 0.15),
+            ),
+        ]
+        s = CapitalStructure.of(
+            tranches,
+            minimum_cash=rng.randint(0, 80),
+            sweep_rate=rate(0.3, 1.0),
+            base_rate=Driver.constant(rate(0, 0.08), periods),
+            day_count=DayCount.ACT_360,
+        )
+        flows = [money(str(round(rng.uniform(-100, 500), 2))) for _ in range(periods)]
+        return s, flows, money(rng.randint(0, 100))
+
+    @pytest.mark.parametrize("seed", range(40))
+    def test_everything_closes_and_nothing_goes_negative(self, seed: int) -> None:
+        rng = random.Random(seed)
+        periods = one_year_grid(5)
+        for _ in range(10):
+            s, flows, cash = self._case(rng, len(periods))
+            schedule = DebtSchedule.run(s, periods, flows, opening_cash=cash)
+            for period in schedule:
+                assert period.reconciles()
+                assert period.closing_cash >= 0
+                for row in period.tranches:
+                    assert row.reconciles()
+                    assert row.closing >= 0
+
+    @pytest.mark.parametrize("seed", range(10))
+    def test_the_solver_settles_without_shortening_its_step(self, seed: int) -> None:
+        rng = random.Random(seed + 1000)
+        periods = one_year_grid(5)
+        for _ in range(10):
+            s, flows, cash = self._case(rng, len(periods))
+            schedule = DebtSchedule.run(s, periods, flows, opening_cash=cash)
+            assert schedule.max_residual <= s.tolerance
+            assert schedule.max_iterations_used <= 20
+            assert schedule.shortest_step_taken == money(1)
