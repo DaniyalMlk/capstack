@@ -20,6 +20,7 @@ from typing import Any
 
 from dataclasses import dataclass
 
+from .balance_sheet import OpeningBalanceSheet, PurchaseAccounting, TargetBookBalanceSheet
 from .drivers import Driver
 from .money import Money, money
 from .operating import DEFAULT_NOL_USAGE_LIMIT, OperatingAssumptions, OperatingModel
@@ -52,10 +53,29 @@ class Deal:
     operating: OperatingAssumptions | None = None
     opening_revenue: Money | None = None
     opening_net_working_capital: Money | None = None
+    book: TargetBookBalanceSheet | None = None
+    accounting: PurchaseAccounting | None = None
 
     @property
     def has_projection(self) -> bool:
         return self.grid is not None and self.operating is not None
+
+    @property
+    def has_balance_sheet(self) -> bool:
+        return self.book is not None
+
+    def recapitalise(self) -> OpeningBalanceSheet:
+        """Build the balance sheet the target carries out of close.
+
+        Requires the target's own book position, which the funding table does
+        not need and so is not required to describe a deal.
+        """
+        if self.book is None:
+            raise DealSpecError(
+                'this deal has no opening balance sheet; add a "target" block '
+                "describing the book position before close"
+            )
+        return OpeningBalanceSheet.recapitalise(self.transaction, self.book, self.accounting)
 
     def project(self) -> OperatingModel:
         """Run the operating case.
@@ -115,10 +135,16 @@ def _other_use(data: Any, index: int) -> LineItem:
     where = f"other_uses[{index}]"
     if not isinstance(data, dict):
         raise DealSpecError(f"{where}: expected an object")
+    capitalised = data.get("capitalised", False)
+    if not isinstance(capitalised, bool):
+        raise DealSpecError(
+            f"{where}.capitalised: expected true or false, got {capitalised!r}"
+        )
     return LineItem(
         label=str(_require(data, "label", where)),
         amount=_amount(_require(data, "amount", where), f"{where}.amount"),
         note=str(data.get("note", "")),
+        capitalised=capitalised,
     )
 
 
@@ -153,6 +179,27 @@ def _driver(value: Any, periods: int, where: str) -> Driver:
             raise DealSpecError(f"{where}: an empty series says nothing")
         return Driver.of([_amount(v, where) for v in value]).extended_to(periods)
     return Driver.constant(_amount(value, where), periods)
+
+
+def _parse_target(data: Any) -> tuple[TargetBookBalanceSheet, PurchaseAccounting]:
+    """Read the target's book position and how the price is allocated over it."""
+    where = "target"
+    if not isinstance(data, dict):
+        raise DealSpecError(f"{where}: expected an object")
+    book = TargetBookBalanceSheet(
+        total_assets=_amount(
+            _require(data, "total_assets", where), f"{where}.total_assets"
+        ),
+        total_liabilities=_amount(
+            _require(data, "total_liabilities", where), f"{where}.total_liabilities"
+        ),
+        goodwill=_optional_amount(data, "goodwill", where),
+    )
+    accounting = PurchaseAccounting(
+        step_up=_optional_amount(data, "step_up", where),
+        step_up_tax_rate=_optional_amount(data, "step_up_tax_rate", where),
+    )
+    return book, accounting
 
 
 def _parse_projection(data: dict[str, Any], close: date | None) -> PeriodGrid:
@@ -281,6 +328,11 @@ def parse_deal(data: dict[str, Any]) -> Deal:
             operating_raw, len(grid)
         )
 
+    book: TargetBookBalanceSheet | None = None
+    accounting: PurchaseAccounting | None = None
+    if data.get("target") is not None:
+        book, accounting = _parse_target(data["target"])
+
     return Deal(
         name=name,
         close_date=close,
@@ -289,6 +341,8 @@ def parse_deal(data: dict[str, Any]) -> Deal:
         operating=assumptions,
         opening_revenue=opening_revenue,
         opening_net_working_capital=opening_nwc,
+        book=book,
+        accounting=accounting,
     )
 
 

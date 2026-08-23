@@ -18,7 +18,7 @@ would actually read.
 - [x] Sources and uses that balance exactly, with the sponsor equity as the plug
 - [x] Transaction fees, financing fees and original issue discount
 - [x] Deal files, so a transaction can be described once and reused
-- [ ] Opening balance sheet after the recapitalisation
+- [x] Opening balance sheet after the recapitalisation
 
 ## Phase 3 — Operating model
 

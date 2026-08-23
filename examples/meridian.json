@@ -44,6 +44,14 @@
     { "label": "Change of control payments", "amount": 18.5, "note": "management contracts" }
   ],
 
+  "target": {
+    "total_assets": 1980.0,
+    "total_liabilities": 890.0,
+    "goodwill": 420.0,
+    "step_up": 180.0,
+    "step_up_tax_rate": 0.25
+  },
+
   "projection": {
     "years": 5,
     "frequency": "annual"

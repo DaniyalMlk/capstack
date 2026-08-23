@@ -39,11 +39,20 @@ class LineKind(Enum):
 
 @dataclass(frozen=True, slots=True)
 class LineItem:
-    """One row of the funding table."""
+    """One row of the funding table.
+
+    ``capitalised`` says what a payment leaves behind. Most closing payments buy
+    nothing — a change-of-control payment to management settles a contract and
+    is gone — and those are charged against equity on day one. A few buy
+    something the balance sheet keeps, such as a licence acquired alongside the
+    business. The funding table does not care either way, but the opening
+    balance sheet cannot be built without knowing.
+    """
 
     label: str
     amount: Money
     note: str = ""
+    capitalised: bool = False
 
     def __post_init__(self) -> None:
         if not self.label.strip():

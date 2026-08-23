@@ -8,10 +8,10 @@ gets paid down, whether the covenants hold, and what the sponsor makes on the wa
 out.
 
 Status: early. Three layers are in — the numerics (exact money, day counts,
-period grids, the return measures), the transaction (entry valuation and a
-sources and uses table that balances), and the operating case (drivers through
-to unlevered free cash flow). The debt schedule is next; see
-[ROADMAP.md](ROADMAP.md).
+period grids, the return measures), the transaction (entry valuation, a sources
+and uses table that balances, and the opening balance sheet after the
+recapitalisation), and the operating case (drivers through to unlevered free
+cash flow). The debt schedule is next; see [ROADMAP.md](ROADMAP.md).
 
 ## Install
 
@@ -79,6 +79,43 @@ Project Meridian   (close 2026-06-30)
     Equity contribution                 36.8%
     Sponsor ownership                   92.1%
     Total capitalisation              2,929.14
+```
+
+It also carries the target's own balance sheet, which is what purchase
+accounting is applied to:
+
+```console
+$ capstack balance examples/meridian.json
+Project Meridian - opening balance sheet   (close 2026-06-30)
+=============================================================
+
+  Assets
+    Cash                           60.00
+    Identifiable assets         1,675.00
+    Goodwill                    1,610.00
+    Deferred financing costs       41.25
+    Unamortised issue discount     10.75
+                                --------
+    Total assets                3,397.00
+
+  Liabilities
+    Debt at face                1,850.00
+    Operating liabilities         480.00
+    Deferred tax liability         45.00
+                                --------
+    Total liabilities           2,375.00
+
+  Equity
+    Sponsor equity                994.14
+    Rollover equity                85.00
+    Expensed at close             -57.14
+                                --------
+    Total equity                1,022.00
+
+    Liabilities and equity      3,397.00
+
+    Net debt                    1,790.00
+    Goodwill share of assets       47.4%
 ```
 
 The same file carries the operating case:
@@ -155,6 +192,17 @@ with the seller, and equity fills whatever gap is left. When that residual comes
 out negative the structure is funding itself entirely out of its own borrowing
 capacity and paying the sponsor a distribution at close. That is aggressive, not
 invalid, so the model labels it rather than refusing it.
+
+**Goodwill is a residual, and the target's own goodwill is not part of it.**
+Goodwill on the target's books is the leftover of somebody else's transaction.
+It is written off at close and a new residual is struck against the price just
+paid; carrying both counts the same intangible twice and flatters the asset side
+by the whole of the old number.
+
+A fair-value step-up in a stock deal comes with a deferred tax liability, because
+book depreciation rises and tax depreciation does not. Recognising the step-up
+without the liability overstates equity by the tax on it. In the shipped example,
+180 of step-up at 25% moves only 135 out of goodwill, not 180.
 
 **Working capital reaches cash flow as a movement, not a level.** A business
 growing at 8% with working capital steady at 15% of revenue consumes cash every
