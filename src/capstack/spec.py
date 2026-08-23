@@ -115,10 +115,16 @@ def _other_use(data: Any, index: int) -> LineItem:
     where = f"other_uses[{index}]"
     if not isinstance(data, dict):
         raise DealSpecError(f"{where}: expected an object")
+    capitalised = data.get("capitalised", False)
+    if not isinstance(capitalised, bool):
+        raise DealSpecError(
+            f"{where}.capitalised: expected true or false, got {capitalised!r}"
+        )
     return LineItem(
         label=str(_require(data, "label", where)),
         amount=_amount(_require(data, "amount", where), f"{where}.amount"),
         note=str(data.get("note", "")),
+        capitalised=capitalised,
     )
 
 

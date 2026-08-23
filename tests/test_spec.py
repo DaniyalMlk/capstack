@@ -58,6 +58,27 @@ class TestParsing:
         assert d.transaction.other_uses[0].amount == money(12)
         assert d.transaction.other_uses[0].note == "payable"
 
+    def test_a_closing_payment_is_expensed_unless_it_says_otherwise(self) -> None:
+        d = parse_deal({**MINIMAL, "other_uses": [{"label": "Break fee", "amount": 12}]})
+        assert d.transaction.other_uses[0].capitalised is False
+
+    def test_a_closing_payment_can_be_marked_capitalised(self) -> None:
+        d = parse_deal(
+            {
+                **MINIMAL,
+                "other_uses": [
+                    {"label": "Licence acquired", "amount": 30, "capitalised": True}
+                ],
+            }
+        )
+        assert d.transaction.other_uses[0].capitalised is True
+
+    def test_capitalised_must_be_a_boolean(self) -> None:
+        with pytest.raises(DealSpecError, match=r"other_uses\[0\]\.capitalised"):
+            parse_deal(
+                {**MINIMAL, "other_uses": [{"label": "x", "amount": 1, "capitalised": "yes"}]}
+            )
+
     def test_optional_amounts_default_to_zero(self) -> None:
         d = parse_deal(dict(MINIMAL))
         assert d.transaction.rollover_equity == money(0)
