@@ -504,3 +504,156 @@ class TestShippedExampleBalanceSheet:
         assert sheet.operating_liabilities == money("480.00")
         assert sheet.cash == money("60.00")  # 65 held, 45 used, 40 funded
         assert sheet.total_assets == sheet.total_liabilities_and_equity
+
+
+class TestStructureBlock:
+    BASE = {
+        "entry": {"ltm_ebitda": 100, "multiple": 10},
+        "close_date": "2026-06-30",
+        "debt": [
+            {"name": "RCF", "kind": "revolver", "face": 0, "commitment": 50,
+             "cash_rate": 0.03, "undrawn_fee": 0.005},
+            {"name": "TLB", "kind": "term_loan", "face": 500, "cash_rate": 0.0375,
+             "floor": 0.01, "amortisation": 0.01},
+            {"name": "Notes", "kind": "notes", "face": 200, "cash_rate": 0.075},
+        ],
+        "structure": {"minimum_cash": 10, "base_rate": 0.04},
+        "projection": {"years": 3},
+        "operating": {
+            "opening_revenue": 600,
+            "revenue_growth": 0.05,
+            "ebitda_margin": 0.17,
+            "da_rate": 0.03,
+            "capex_rate": 0.04,
+            "nwc_rate": 0.10,
+            "tax_rate": 0.25,
+        },
+    }
+
+    def test_absent_by_default(self) -> None:
+        d = parse_deal(dict(MINIMAL))
+        assert d.has_structure is False
+        with pytest.raises(DealSpecError, match='add a "structure" block'):
+            d.schedule()
+
+    def test_kinds_are_read(self) -> None:
+        d = parse_deal(dict(self.BASE))
+        assert d.structure is not None
+        assert [t.kind.value for t in d.structure] == ["revolver", "term_loan", "notes"]
+
+    def test_conventions_follow_the_kind_unless_overridden(self) -> None:
+        d = parse_deal(dict(self.BASE))
+        assert d.structure is not None
+        assert d.structure.tranche("TLB").swept
+        assert d.structure.tranche("TLB").floating
+        assert not d.structure.tranche("Notes").swept
+        assert not d.structure.tranche("Notes").floating
+
+    def test_an_override_wins(self) -> None:
+        payload = json.loads(json.dumps(self.BASE))
+        payload["debt"][2]["swept"] = True
+        payload["debt"][2]["seniority"] = 1
+        d = parse_deal(payload)
+        assert d.structure is not None
+        assert d.structure.tranche("Notes").swept
+
+    def test_the_amortisation_series_spans_the_projection(self) -> None:
+        d = parse_deal(dict(self.BASE))
+        assert d.structure is not None
+        amortisation = d.structure.tranche("TLB").amortisation
+        assert amortisation is not None and len(amortisation) == 3
+
+    def test_the_funding_table_and_the_schedule_read_the_same_tranches(self) -> None:
+        d = parse_deal(dict(self.BASE))
+        assert d.structure is not None
+        assert [t.name for t in d.transaction.debt] == [t.name for t in d.structure]
+        assert [t.face for t in d.transaction.debt] == [t.face for t in d.structure]
+
+    def test_the_schedule_opens_on_the_cash_the_deal_leaves_behind(self) -> None:
+        payload = json.loads(json.dumps(self.BASE))
+        payload["entry"]["existing_cash"] = 30
+        payload["cash_from_balance_sheet"] = 20
+        payload["cash_to_balance_sheet"] = 25
+        d = parse_deal(payload)
+        assert d.cash_at_close == money(35)
+        assert d.schedule()[0].opening_cash == money(35)
+
+    def test_an_explicit_opening_cash_balance_wins(self) -> None:
+        payload = json.loads(json.dumps(self.BASE))
+        payload["structure"]["opening_cash"] = 75
+        assert parse_deal(payload).schedule()[0].opening_cash == money(75)
+
+    def test_it_runs_against_the_operating_case(self) -> None:
+        schedule = parse_deal(dict(self.BASE)).schedule()
+        assert len(schedule) == 3
+        for period in schedule:
+            assert period.reconciles()
+
+    def test_an_unknown_kind_is_named(self) -> None:
+        payload = json.loads(json.dumps(self.BASE))
+        payload["debt"][0]["kind"] = "junk bond"
+        with pytest.raises(DealSpecError, match=r"debt\[0\].kind: unknown kind"):
+            parse_deal(payload)
+
+    def test_an_unknown_day_count_is_named(self) -> None:
+        payload = json.loads(json.dumps(self.BASE))
+        payload["structure"]["day_count"] = "ACT/999"
+        with pytest.raises(DealSpecError, match="unknown convention"):
+            parse_deal(payload)
+
+    def test_an_unknown_interest_basis_is_named(self) -> None:
+        payload = json.loads(json.dumps(self.BASE))
+        payload["structure"]["interest_basis"] = "closing"
+        with pytest.raises(DealSpecError, match="interest_basis"):
+            parse_deal(payload)
+
+    def test_a_floating_tranche_without_a_base_rate_is_refused(self) -> None:
+        payload = json.loads(json.dumps(self.BASE))
+        del payload["structure"]["base_rate"]
+        with pytest.raises(DealSpecError, match="a base rate is required"):
+            parse_deal(payload)
+
+    def test_a_structure_with_no_tranches_is_refused(self) -> None:
+        with pytest.raises(DealSpecError, match="no tranches to schedule"):
+            parse_deal({**MINIMAL, "structure": {"minimum_cash": 10}})
+
+    def test_a_domain_error_names_the_tranche(self) -> None:
+        payload = json.loads(json.dumps(self.BASE))
+        payload["debt"][0]["face"] = 80  # more than the 50 commitment
+        with pytest.raises(DealSpecError, match=r"debt\[0\]: RCF: drawn at close"):
+            parse_deal(payload)
+
+    def test_maturity_must_be_a_whole_number(self) -> None:
+        payload = json.loads(json.dumps(self.BASE))
+        payload["debt"][1]["maturity"] = "seven"
+        with pytest.raises(DealSpecError, match="not a whole number"):
+            parse_deal(payload)
+
+
+class TestShippedExampleSchedule:
+    def test_the_example_schedules(self) -> None:
+        path = Path(__file__).resolve().parents[1] / "examples" / "meridian.json"
+        d = load_deal(path)
+        schedule = d.schedule()
+        model = d.project()
+
+        assert len(schedule) == 5
+        assert schedule.is_funded
+        for period in schedule:
+            assert period.reconciles()
+            for row in period.tranches:
+                assert row.reconciles
+
+        # The structure deleverages: 7.71x going in, comfortably below that
+        # coming out, and the second lien is larger at the end than it started
+        # because it accrues rather than pays.
+        entry = d.transaction.entry_leverage
+        exit_leverage = schedule.leverage_at(4, model.exit_ebitda)
+        assert exit_leverage < entry
+        assert schedule.balances_at(4)["Second lien"] > money(250)
+
+    def test_the_revolver_is_drawn_early_and_repaid(self) -> None:
+        path = Path(__file__).resolve().parents[1] / "examples" / "meridian.json"
+        schedule = load_deal(path).schedule()
+        assert schedule.peak_revolver_drawn > money(0)
+        assert schedule[4].tranche("Revolving credit facility").closing == money(0)
