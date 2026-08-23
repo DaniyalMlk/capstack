@@ -1,5 +1,12 @@
 """capstack — a leveraged buyout engine."""
 
+from .balance_sheet import (
+    BalanceSheetError,
+    OpeningBalanceSheet,
+    PurchaseAccounting,
+    TargetBookBalanceSheet,
+    UnbalancedBalanceSheet,
+)
 from .daycount import DayCount, year_fraction
 from .drivers import Driver
 from .money import Money, money, quantize, rate
@@ -36,6 +43,7 @@ __version__ = "0.1.0"
 
 __all__ = [
     "AmbiguousIRR",
+    "BalanceSheetError",
     "CashFlow",
     "CashFlowStream",
     "DayCount",
@@ -49,14 +57,18 @@ __all__ = [
     "LineItem",
     "Money",
     "NoSignChange",
+    "OpeningBalanceSheet",
     "OperatingAssumptions",
     "OperatingModel",
     "OperatingPeriod",
     "Period",
     "PeriodGrid",
+    "PurchaseAccounting",
     "SourcesAndUses",
+    "TargetBookBalanceSheet",
     "TaxResult",
     "Transaction",
+    "UnbalancedBalanceSheet",
     "UnbalancedTransaction",
     "__version__",
     "apply_carryforward",

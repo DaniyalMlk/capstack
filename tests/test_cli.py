@@ -269,3 +269,63 @@ class TestProjectCommand:
         out = capsys.readouterr().out
         assert code == 0
         assert "Losses carried forward" in out
+
+
+class TestBalanceCommand:
+    @pytest.fixture()
+    def example(self) -> str:
+        return str(Path(__file__).resolve().parents[1] / "examples" / "meridian.json")
+
+    def test_prints_a_sheet_that_balances(
+        self, example: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        code = main(["balance", example])
+        out = capsys.readouterr().out
+        assert code == 0
+        assert "opening balance sheet" in out
+        # Total assets and liabilities-and-equity are the same figure, printed twice.
+        assert out.count("3,397.00") == 2
+        assert "Goodwill" in out
+
+    def test_expensed_costs_print_as_a_deduction(
+        self, example: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        code = main(["balance", example])
+        out = capsys.readouterr().out
+        assert code == 0
+        assert "-57.14" in out
+
+    def test_json_output(self, example: str, capsys: pytest.CaptureFixture[str]) -> None:
+        code = main(["balance", example, "--json"])
+        payload = json.loads(capsys.readouterr().out)
+        assert code == 0
+        assert payload["balanced"] is True
+        assert payload["total_assets"] == payload["total_liabilities_and_equity"]
+        assert payload["assets"]["goodwill"] == "1610.00"
+        assert payload["liabilities"]["deferred_tax_liability"] == "45.00"
+
+    def test_a_deal_without_a_target_block_says_so(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        path = tmp_path / "deal.json"
+        path.write_text(json.dumps({"entry": {"ltm_ebitda": 100, "multiple": 10}}), "utf-8")
+        code = main(["balance", str(path)])
+        assert code == 1
+        assert 'add a "target" block' in capsys.readouterr().err
+
+    def test_a_contradictory_book_position_is_reported(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        path = tmp_path / "deal.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "entry": {"ltm_ebitda": 100, "multiple": 10, "existing_debt": 150},
+                    "target": {"total_assets": 400, "total_liabilities": 100},
+                }
+            ),
+            "utf-8",
+        )
+        code = main(["balance", str(path)])
+        assert code == 2
+        assert "of debt, which is more" in capsys.readouterr().err

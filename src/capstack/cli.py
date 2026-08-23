@@ -336,6 +336,115 @@ def _print_projection(report: dict[str, Any]) -> None:
         )
 
 
+#: The opening balance sheet, as it would be laid out on a page. Each row is a
+#: label, the attribute behind it, and whether it belongs on the asset side.
+_BALANCE_SHEET_ROWS: tuple[tuple[str, str, str], ...] = (
+    ("assets", "Cash", "cash"),
+    ("assets", "Identifiable assets", "identifiable_assets"),
+    ("assets", "Goodwill", "goodwill"),
+    ("assets", "Deferred financing costs", "deferred_financing_costs"),
+    ("assets", "Unamortised issue discount", "unamortised_issue_discount"),
+    ("liabilities", "Debt at face", "debt_at_face"),
+    ("liabilities", "Operating liabilities", "operating_liabilities"),
+    ("liabilities", "Deferred tax liability", "deferred_tax_liability"),
+    ("equity", "Sponsor equity", "sponsor_equity"),
+    ("equity", "Rollover equity", "rollover_equity"),
+    ("equity", "Expensed at close", "expensed_at_close"),
+)
+
+#: Shown as a deduction, because it is one.
+_BALANCE_SHEET_NEGATED = frozenset({"Expensed at close"})
+
+
+def _balance_report(deal: Deal) -> dict[str, Any]:
+    sheet = deal.recapitalise()
+    return {
+        "name": deal.name,
+        "close_date": deal.close_date.isoformat() if deal.close_date else None,
+        "assets": {
+            key: _amount_str(getattr(sheet, key))
+            for side, _, key in _BALANCE_SHEET_ROWS
+            if side == "assets"
+        },
+        "liabilities": {
+            key: _amount_str(getattr(sheet, key))
+            for side, _, key in _BALANCE_SHEET_ROWS
+            if side == "liabilities"
+        },
+        "equity": {
+            key: _amount_str(getattr(sheet, key))
+            for side, _, key in _BALANCE_SHEET_ROWS
+            if side == "equity"
+        },
+        "total_assets": _amount_str(sheet.total_assets),
+        "total_liabilities": _amount_str(sheet.total_liabilities),
+        "total_equity": _amount_str(sheet.total_equity),
+        "total_liabilities_and_equity": _amount_str(sheet.total_liabilities_and_equity),
+        "balanced": sheet.total_assets == sheet.total_liabilities_and_equity,
+        "net_debt": _amount_str(sheet.net_debt),
+        "goodwill_share_of_assets": float(sheet.goodwill_share_of_assets),
+    }
+
+
+def _print_balance(report: dict[str, Any]) -> None:
+    header = f"{report['name']} - opening balance sheet"
+    if report["close_date"]:
+        header += f"   (close {report['close_date']})"
+    print(header)
+    print("=" * len(header))
+    print()
+
+    label_width = max(len(label) for _, label, _ in _BALANCE_SHEET_ROWS)
+    amount_width = max(
+        len(_format_money(Decimal(report[side][key])))
+        for side, _, key in _BALANCE_SHEET_ROWS
+    )
+    amount_width = max(amount_width, len(_format_money(Decimal(report["total_assets"]))))
+
+    def block(title: str, side: str, total_label: str, total_key: str) -> None:
+        print(f"  {title}")
+        for row_side, label, key in _BALANCE_SHEET_ROWS:
+            if row_side != side:
+                continue
+            value = Decimal(report[side][key])
+            if label in _BALANCE_SHEET_NEGATED:
+                value = -value
+            elif value == 0:
+                continue
+            print(f"    {label:<{label_width}}  {_format_money(value):>{amount_width}}")
+        print(f"    {'':<{label_width}}  {'-' * amount_width}")
+        print(
+            f"    {total_label:<{label_width}}  "
+            f"{_format_money(Decimal(report[total_key])):>{amount_width}}"
+        )
+        print()
+
+    block("Assets", "assets", "Total assets", "total_assets")
+    block("Liabilities", "liabilities", "Total liabilities", "total_liabilities")
+    block("Equity", "equity", "Total equity", "total_equity")
+
+    print(
+        f"    {'Liabilities and equity':<{label_width}}  "
+        f"{_format_money(Decimal(report['total_liabilities_and_equity'])):>{amount_width}}"
+    )
+    print()
+    print(f"    {'Net debt':<{label_width}}  {_format_money(Decimal(report['net_debt'])):>{amount_width}}")
+    print(
+        f"    {'Goodwill share of assets':<{label_width}}  "
+        f"{report['goodwill_share_of_assets']:>{amount_width}.1%}"
+    )
+
+
+def _cmd_balance(args: argparse.Namespace) -> int:
+    deal = load_deal(args.file)
+    report = _balance_report(deal)
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        _print_balance(report)
+    return 0
+
+
 def _cmd_project(args: argparse.Namespace) -> int:
     deal = load_deal(args.file)
     report = _projection_report(deal)
@@ -398,6 +507,18 @@ def build_parser() -> argparse.ArgumentParser:
     deal.add_argument("file", help="path to a deal file (JSON)")
     deal.add_argument("--json", action="store_true", help="emit JSON instead of a table")
     deal.set_defaults(handler=_cmd_deal)
+
+    balance = sub.add_parser(
+        "balance",
+        help="the opening balance sheet after the recapitalisation",
+        description=(
+            "Apply the transaction to the target's book position and print the "
+            "balance sheet the business carries out of close."
+        ),
+    )
+    balance.add_argument("file", help="path to a deal file (JSON)")
+    balance.add_argument("--json", action="store_true", help="emit JSON instead of a table")
+    balance.set_defaults(handler=_cmd_balance)
 
     project = sub.add_parser(
         "project",
