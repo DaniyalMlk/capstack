@@ -329,3 +329,81 @@ class TestBalanceCommand:
         code = main(["balance", str(path)])
         assert code == 2
         assert "of debt, which is more" in capsys.readouterr().err
+
+
+class TestScheduleCommand:
+    @pytest.fixture()
+    def example(self) -> str:
+        return str(Path(__file__).resolve().parents[1] / "examples" / "meridian.json")
+
+    def test_prints_the_schedule(
+        self, example: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        code = main(["schedule", example])
+        out = capsys.readouterr().out
+        assert code == 0
+        assert "debt schedule" in out
+        assert "Cash sweep" in out
+        assert "Closing balances" in out
+        # Interest and repayments print as outflows.
+        assert "-141.32" in out
+
+    def test_leverage_falls_across_the_hold(
+        self, example: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        main(["schedule", example])
+        out = capsys.readouterr().out
+        assert "7.71x" in out  # entry
+        assert "4.64x" in out  # exit
+
+    def test_json_output(self, example: str, capsys: pytest.CaptureFixture[str]) -> None:
+        code = main(["schedule", example, "--json"])
+        payload = json.loads(capsys.readouterr().out)
+        assert code == 0
+        assert payload["funded"] is True
+        assert len(payload["periods"]) == 5
+        assert payload["exit_leverage"] < payload["entry_leverage"]
+        assert set(payload["periods"][0]["balances"]) == set(payload["tranches"])
+        assert payload["max_iterations"] >= 1
+
+    def test_a_deal_without_a_structure_says_so(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        path = tmp_path / "deal.json"
+        path.write_text(json.dumps({"entry": {"ltm_ebitda": 100, "multiple": 10}}), "utf-8")
+        code = main(["schedule", str(path)])
+        assert code == 1
+        assert 'add a "structure" block' in capsys.readouterr().err
+
+    def test_a_structure_that_does_not_fund_itself_is_called_out(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        path = tmp_path / "deal.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "name": "Overlevered",
+                    "close_date": "2026-06-30",
+                    "entry": {"ltm_ebitda": 100, "multiple": 10},
+                    "debt": [
+                        {"name": "Notes", "kind": "notes", "face": 900, "cash_rate": 0.12}
+                    ],
+                    "structure": {"minimum_cash": 0},
+                    "projection": {"years": 2},
+                    "operating": {
+                        "opening_revenue": 500,
+                        "revenue_growth": 0.02,
+                        "ebitda_margin": 0.15,
+                        "da_rate": 0.03,
+                        "capex_rate": 0.04,
+                        "nwc_rate": 0.10,
+                        "tax_rate": 0.25,
+                    },
+                }
+            ),
+            "utf-8",
+        )
+        code = main(["schedule", str(path)])
+        out = capsys.readouterr().out
+        assert code == 0
+        assert "does not fund itself" in out
