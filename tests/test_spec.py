@@ -416,3 +416,91 @@ class TestShippedExampleProjection:
         model = d.project()
         implied_ltm_margin = d.transaction.valuation.ltm_ebitda / model.opening_revenue
         assert abs(implied_ltm_margin - model[0].ebitda_margin) < money("0.005")
+
+
+class TestTargetBlock:
+    def test_absent_by_default(self) -> None:
+        d = parse_deal(dict(MINIMAL))
+        assert d.has_balance_sheet is False
+        with pytest.raises(DealSpecError, match='add a "target" block'):
+            d.recapitalise()
+
+    def test_the_book_position_is_read(self) -> None:
+        d = parse_deal(
+            {
+                **MINIMAL,
+                "target": {"total_assets": 400, "total_liabilities": 260, "goodwill": 60},
+            }
+        )
+        assert d.has_balance_sheet
+        assert d.book is not None
+        assert d.book.book_equity == money(140)
+        assert d.book.goodwill == money(60)
+
+    def test_goodwill_and_the_step_up_default_to_nothing(self) -> None:
+        d = parse_deal(
+            {**MINIMAL, "target": {"total_assets": 400, "total_liabilities": 260}}
+        )
+        assert d.book is not None and d.accounting is not None
+        assert d.book.goodwill == money(0)
+        assert d.accounting.deferred_tax_liability == money(0)
+
+    def test_the_step_up_and_its_tax_rate_are_read(self) -> None:
+        d = parse_deal(
+            {
+                **MINIMAL,
+                "target": {
+                    "total_assets": 400,
+                    "total_liabilities": 260,
+                    "step_up": 200,
+                    "step_up_tax_rate": 0.25,
+                },
+            }
+        )
+        assert d.accounting is not None
+        assert d.accounting.step_up == money(200)
+        assert d.accounting.deferred_tax_liability == money(50)
+
+    def test_the_sheet_it_produces_balances(self) -> None:
+        d = parse_deal(
+            {
+                **MINIMAL,
+                "debt": [{"name": "TLB", "face": 500}],
+                "target": {"total_assets": 400, "total_liabilities": 260, "goodwill": 60},
+            }
+        )
+        sheet = d.recapitalise()
+        assert sheet.total_assets == sheet.total_liabilities_and_equity
+
+    def test_the_target_must_be_an_object(self) -> None:
+        with pytest.raises(DealSpecError, match="target: expected an object"):
+            parse_deal({**MINIMAL, "target": [1, 2]})
+
+    def test_total_assets_are_required(self) -> None:
+        with pytest.raises(DealSpecError, match="target: missing required field 'total_assets'"):
+            parse_deal({**MINIMAL, "target": {"total_liabilities": 10}})
+
+    def test_total_liabilities_are_required(self) -> None:
+        with pytest.raises(
+            DealSpecError, match="target: missing required field 'total_liabilities'"
+        ):
+            parse_deal({**MINIMAL, "target": {"total_assets": 10}})
+
+
+class TestShippedExampleBalanceSheet:
+    def test_the_example_recapitalises(self) -> None:
+        path = Path(__file__).resolve().parents[1] / "examples" / "meridian.json"
+        d = load_deal(path)
+        sheet = d.recapitalise()
+
+        # Worked by hand from the file:
+        #   book equity          1,980.00 - 890.00            = 1,090.00
+        #   less historic goodwill                            =   670.00
+        #   plus step-up 180.00 less deferred tax 45.00       =   805.00
+        #   goodwill = equity price 2,415.00 - 805.00         = 1,610.00
+        assert sheet.deferred_tax_liability == money("45.00")
+        assert sheet.goodwill == money("1610.00")
+        assert sheet.debt_at_face == money("1850.00")
+        assert sheet.operating_liabilities == money("480.00")
+        assert sheet.cash == money("60.00")  # 65 held, 45 used, 40 funded
+        assert sheet.total_assets == sheet.total_liabilities_and_equity
