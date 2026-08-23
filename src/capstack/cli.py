@@ -445,6 +445,144 @@ def _cmd_balance(args: argparse.Namespace) -> int:
     return 0
 
 
+#: Summary rows above the per-tranche detail: label, attribute, and whether the
+#: figure is money leaving the business.
+_SCHEDULE_ROWS: tuple[tuple[str, str, bool], ...] = (
+    ("Unlevered free cash flow", "unlevered_free_cash_flow", False),
+    ("Cash interest", "cash_interest", True),
+    ("Commitment fees", "undrawn_fees", True),
+    ("Levered free cash flow", "levered_free_cash_flow", False),
+    ("Mandatory repayment", "mandatory_repayment", True),
+    ("Cash sweep", "sweep_repayment", True),
+    ("Revolver draw", "revolver_draw", False),
+    ("Closing cash", "closing_cash", False),
+    ("Accrued to balances", "pik_interest", False),
+    ("Closing debt", "closing_debt", False),
+)
+
+
+def _schedule_report(deal: Deal) -> dict[str, Any]:
+    schedule = deal.schedule()
+    model = deal.project()
+    names = [t.name for t in schedule.structure]
+    return {
+        "name": deal.name,
+        "tranches": names,
+        "periods": [
+            {
+                "index": period.index,
+                "ending": period.period.end.isoformat(),
+                "base_rate": float(period.base_rate),
+                **{key: _amount_str(getattr(period, key)) for _, key, _ in _SCHEDULE_ROWS},
+                "funding_shortfall": _amount_str(period.funding_shortfall),
+                "iterations": period.iterations,
+                "residual": _amount_str(period.residual),
+                "leverage": float(schedule.leverage_at(i, model[i].ebitda)),
+                "balances": {
+                    row.name: _amount_str(row.closing) for row in period.tranches
+                },
+                "interest": {
+                    row.name: _amount_str(row.cash_interest) for row in period.tranches
+                },
+            }
+            for i, period in enumerate(schedule)
+        ],
+        "totals": {
+            "cash_interest": _amount_str(schedule.total_cash_interest),
+            "pik_interest": _amount_str(schedule.total_pik_interest),
+            "undrawn_fees": _amount_str(schedule.total_undrawn_fees),
+            "repaid": _amount_str(schedule.total_repaid),
+            "drawn": _amount_str(schedule.total_drawn),
+            "opening_debt": _amount_str(schedule.opening_debt),
+            "closing_debt": _amount_str(schedule.closing_debt),
+            "closing_net_debt": _amount_str(schedule.closing_net_debt),
+            "debt_repaid": _amount_str(schedule.debt_repaid),
+            "peak_revolver_drawn": _amount_str(schedule.peak_revolver_drawn),
+        },
+        "entry_leverage": float(deal.transaction.entry_leverage),
+        "exit_leverage": float(schedule.leverage_at(len(schedule) - 1, model.exit_ebitda)),
+        "funded": schedule.is_funded,
+        "max_iterations": schedule.max_iterations_used,
+        "max_residual": _amount_str(schedule.max_residual),
+    }
+
+
+def _print_schedule(report: dict[str, Any]) -> None:
+    periods = report["periods"]
+    header = f"{report['name']} - debt schedule"
+    print(header)
+    print("=" * len(header))
+    print()
+
+    labels = [label for label, _, _ in _SCHEDULE_ROWS] + report["tranches"]
+    label_width = max(len(label) for label in labels) + 2
+    widest = max(
+        len(_format_money(Decimal(p[key])))
+        for p in periods
+        for _, key, _ in _SCHEDULE_ROWS
+    )
+    column = max(widest, 9) + 2
+
+    def row(label: str, cells: list[str]) -> str:
+        return "  " + label.ljust(label_width) + "".join(c.rjust(column) for c in cells)
+
+    print(row("", [f"P{p['index']}" for p in periods]))
+    print(row("", [p["ending"][:7] for p in periods]))
+    print("  " + "-" * (label_width + column * len(periods)))
+
+    for label, key, outflow in _SCHEDULE_ROWS:
+        values = [Decimal(p[key]) for p in periods]
+        cells = [_format_money(-v if outflow else v) for v in values]
+        print(row(label, cells))
+        if label in ("Levered free cash flow", "Closing cash"):
+            print()
+
+    print()
+    print("  Closing balances")
+    for name in report["tranches"]:
+        print(row(name, [_format_money(Decimal(p["balances"][name])) for p in periods]))
+
+    print()
+    print(row("Leverage", [f"{p['leverage']:.2f}x" for p in periods]))
+    print(row("Base rate", [f"{p['base_rate']:.2%}" for p in periods]))
+
+    totals = report["totals"]
+    print()
+    print("  Across the hold")
+    for label, key in (
+        ("Cash interest paid", "cash_interest"),
+        ("Interest accrued to balances", "pik_interest"),
+        ("Commitment fees", "undrawn_fees"),
+        ("Repayments made", "repaid"),
+        ("Revolver drawn", "drawn"),
+        ("Net reduction in debt", "debt_repaid"),
+        ("Peak revolver balance", "peak_revolver_drawn"),
+        ("Closing net debt", "closing_net_debt"),
+    ):
+        print(f"    {label:<30}{_format_money(Decimal(totals[key])):>14}")
+    print(f"    {'Entry leverage':<30}{report['entry_leverage']:>13.2f}x")
+    print(f"    {'Exit leverage':<30}{report['exit_leverage']:>13.2f}x")
+
+    if not report["funded"]:
+        short = next(p for p in periods if Decimal(p["funding_shortfall"]) > 0)
+        print()
+        print(
+            f"    Period {short['index']} is short by "
+            f"{_format_money(Decimal(short['funding_shortfall']))} after the revolver is"
+        )
+        print("    fully drawn. The structure does not fund itself as described.")
+
+
+def _cmd_schedule(args: argparse.Namespace) -> int:
+    deal = load_deal(args.file)
+    report = _schedule_report(deal)
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        _print_schedule(report)
+    return 0
+
+
 def _cmd_project(args: argparse.Namespace) -> int:
     deal = load_deal(args.file)
     report = _projection_report(deal)
@@ -531,6 +669,18 @@ def build_parser() -> argparse.ArgumentParser:
     project.add_argument("file", help="path to a deal file (JSON)")
     project.add_argument("--json", action="store_true", help="emit JSON instead of a table")
     project.set_defaults(handler=_cmd_project)
+
+    schedule = sub.add_parser(
+        "schedule",
+        help="the debt schedule: interest, amortisation, the sweep and the revolver",
+        description=(
+            "Run the capital structure against the operating case and print what "
+            "the debt costs, what gets repaid, and where the leverage ends up."
+        ),
+    )
+    schedule.add_argument("file", help="path to a deal file (JSON)")
+    schedule.add_argument("--json", action="store_true", help="emit JSON instead of a table")
+    schedule.set_defaults(handler=_cmd_schedule)
 
     return parser
 

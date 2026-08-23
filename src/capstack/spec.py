@@ -16,11 +16,20 @@ import json
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from collections.abc import Sequence
 from typing import Any
 
 from dataclasses import dataclass
 
 from .balance_sheet import OpeningBalanceSheet, PurchaseAccounting, TargetBookBalanceSheet
+from .daycount import DayCount
+from .debt import (
+    CapitalStructure,
+    DebtSchedule,
+    InterestBasis,
+    Tranche,
+    TrancheKind,
+)
 from .drivers import Driver
 from .money import Money, money
 from .operating import DEFAULT_NOL_USAGE_LIMIT, OperatingAssumptions, OperatingModel
@@ -55,6 +64,8 @@ class Deal:
     opening_net_working_capital: Money | None = None
     book: TargetBookBalanceSheet | None = None
     accounting: PurchaseAccounting | None = None
+    structure: CapitalStructure | None = None
+    opening_cash: Money | None = None
 
     @property
     def has_projection(self) -> bool:
@@ -76,6 +87,44 @@ class Deal:
                 "describing the book position before close"
             )
         return OpeningBalanceSheet.recapitalise(self.transaction, self.book, self.accounting)
+
+    @property
+    def has_structure(self) -> bool:
+        return self.structure is not None
+
+    @property
+    def cash_at_close(self) -> Money:
+        """Cash the business holds the morning after the deal.
+
+        What the target held, less what the deal took out of it, plus what the
+        structure funded back in. Taking this from the transaction rather than
+        asking for it again keeps the schedule from opening on a cash balance
+        the funding table never produced.
+        """
+        valuation = self.transaction.valuation
+        return (
+            valuation.existing_cash
+            - self.transaction.cash_from_balance_sheet
+            + self.transaction.cash_to_balance_sheet
+        )
+
+    def schedule(self) -> DebtSchedule:
+        """Run the capital structure against the operating case.
+
+        Needs both: a structure with nothing to service is not a schedule, and
+        an operating case with no structure is the projection that already
+        exists one layer down.
+        """
+        if self.structure is None:
+            raise DealSpecError(
+                'this deal has no capital structure; add a "structure" block and '
+                "price the tranches under \"debt\""
+            )
+        return DebtSchedule.from_operating_model(
+            self.structure,
+            self.project(),
+            opening_cash=self.opening_cash if self.opening_cash is not None else self.cash_at_close,
+        )
 
     def project(self) -> OperatingModel:
         """Run the operating case.
@@ -119,7 +168,27 @@ def _optional_amount(data: dict[str, Any], key: str, where: str, default: str = 
     return _amount(data[key], f"{where}.{key}")
 
 
+def _flag(data: dict[str, Any], key: str, where: str) -> bool | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise DealSpecError(f"{where}.{key}: expected true or false, got {value!r}")
+    return value
+
+
+def _whole(data: dict[str, Any], key: str, where: str) -> int | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise DealSpecError(f"{where}.{key}: not a whole number: {value!r}") from exc
+
+
 def _tranche(data: Any, index: int) -> DebtFunding:
+    """The funding view of a tranche: what it raises and what it costs to raise."""
     where = f"debt[{index}]"
     if not isinstance(data, dict):
         raise DealSpecError(f"{where}: expected an object")
@@ -129,6 +198,57 @@ def _tranche(data: Any, index: int) -> DebtFunding:
         issue_price=_optional_amount(data, "issue_price", where, default="1"),
         financing_fee_rate=_optional_amount(data, "financing_fee_rate", where),
     )
+
+
+def _schedule_tranche(data: Any, index: int, periods: int) -> Tranche:
+    """The schedule view of the same tranche: what it costs to carry.
+
+    Deliberately the same object in the file. A structure described twice is a
+    structure that will eventually disagree with itself — the funding table
+    showing one face and the schedule accruing on another.
+    """
+    where = f"debt[{index}]"
+    if not isinstance(data, dict):
+        raise DealSpecError(f"{where}: expected an object")
+
+    kind_name = str(data.get("kind", TrancheKind.TERM_LOAN.value)).lower()
+    try:
+        kind = TrancheKind(kind_name)
+    except ValueError as exc:
+        raise DealSpecError(
+            f"{where}.kind: unknown kind {kind_name!r}; expected one of "
+            f"{', '.join(k.value for k in TrancheKind)}"
+        ) from exc
+
+    amortisation = (
+        _driver(data["amortisation"], periods, f"{where}.amortisation")
+        if data.get("amortisation") is not None
+        else None
+    )
+    commitment = (
+        _amount(data["commitment"], f"{where}.commitment")
+        if data.get("commitment") is not None
+        else None
+    )
+
+    try:
+        return Tranche.of(
+            str(_require(data, "name", where)),
+            kind,
+            _amount(_require(data, "face", where), f"{where}.face"),
+            cash_rate=_optional_amount(data, "cash_rate", where),
+            pik_rate=_optional_amount(data, "pik_rate", where),
+            floating=_flag(data, "floating", where),
+            floor=_optional_amount(data, "floor", where),
+            amortisation=amortisation,
+            seniority=_whole(data, "seniority", where),
+            swept=_flag(data, "swept", where),
+            commitment=commitment,
+            undrawn_fee=_optional_amount(data, "undrawn_fee", where),
+            maturity=_whole(data, "maturity", where),
+        )
+    except ValueError as exc:
+        raise DealSpecError(f"{where}: {exc}") from exc
 
 
 def _other_use(data: Any, index: int) -> LineItem:
@@ -200,6 +320,60 @@ def _parse_target(data: Any) -> tuple[TargetBookBalanceSheet, PurchaseAccounting
         step_up_tax_rate=_optional_amount(data, "step_up_tax_rate", where),
     )
     return book, accounting
+
+
+_DAY_COUNTS = {c.value.lower(): c for c in DayCount}
+_INTEREST_BASES = {b.value: b for b in InterestBasis}
+
+
+def _parse_structure(
+    data: Any, tranches: Sequence[Tranche], periods: int
+) -> tuple[CapitalStructure, Money | None]:
+    """Read the rules that govern how cash moves through the stack."""
+    where = "structure"
+    if not isinstance(data, dict):
+        raise DealSpecError(f"{where}: expected an object")
+
+    day_count_name = str(data.get("day_count", DayCount.ACT_360.value)).lower()
+    if day_count_name not in _DAY_COUNTS:
+        raise DealSpecError(
+            f"{where}.day_count: unknown convention {data.get('day_count')!r}; expected one "
+            f"of {', '.join(c.value for c in DayCount)}"
+        )
+
+    basis_name = str(data.get("interest_basis", InterestBasis.AVERAGE.value)).lower()
+    if basis_name not in _INTEREST_BASES:
+        raise DealSpecError(
+            f"{where}.interest_basis: expected one of "
+            f"{', '.join(sorted(_INTEREST_BASES))}, got {data.get('interest_basis')!r}"
+        )
+
+    base_rate = (
+        _driver(data["base_rate"], periods, f"{where}.base_rate")
+        if data.get("base_rate") is not None
+        else None
+    )
+    opening_cash = (
+        _amount(data["opening_cash"], f"{where}.opening_cash")
+        if data.get("opening_cash") is not None
+        else None
+    )
+
+    try:
+        structure = CapitalStructure.of(
+            tranches,
+            minimum_cash=_optional_amount(data, "minimum_cash", where),
+            sweep_rate=_optional_amount(data, "sweep_rate", where, default="1"),
+            base_rate=base_rate,
+            day_count=_DAY_COUNTS[day_count_name],
+            interest_basis=_INTEREST_BASES[basis_name],
+            damping=_optional_amount(data, "damping", where, default="1"),
+            tolerance=_optional_amount(data, "tolerance", where, default="0.000000001"),
+            max_iterations=_whole(data, "max_iterations", where) or 100,
+        )
+    except ValueError as exc:
+        raise DealSpecError(f"{where}: {exc}") from exc
+    return structure, opening_cash
 
 
 def _parse_projection(data: dict[str, Any], close: date | None) -> PeriodGrid:
@@ -333,6 +507,20 @@ def parse_deal(data: dict[str, Any]) -> Deal:
     if data.get("target") is not None:
         book, accounting = _parse_target(data["target"])
 
+    structure: CapitalStructure | None = None
+    opening_cash: Money | None = None
+    if data.get("structure") is not None:
+        if not debt_raw:
+            raise DealSpecError(
+                "structure: there are no tranches to schedule; describe them under 'debt'"
+            )
+        # Amortisation and base-rate series are read against the projection, so
+        # the grid has to be known first. Without one they collapse to a single
+        # period, which is enough to validate the structure but not to run it.
+        span = len(grid) if grid is not None else 1
+        tranches = tuple(_schedule_tranche(item, i, span) for i, item in enumerate(debt_raw))
+        structure, opening_cash = _parse_structure(data["structure"], tranches, span)
+
     return Deal(
         name=name,
         close_date=close,
@@ -343,6 +531,8 @@ def parse_deal(data: dict[str, Any]) -> Deal:
         opening_net_working_capital=opening_nwc,
         book=book,
         accounting=accounting,
+        structure=structure,
+        opening_cash=opening_cash,
     )
 
 
