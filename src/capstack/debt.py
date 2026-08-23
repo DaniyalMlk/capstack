@@ -36,17 +36,23 @@ the loop by accruing on the opening balance and calling the difference small.
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 
 from .daycount import DayCount
 from .drivers import Driver
 from .money import ONE, ZERO, Money, Numeric, money, safe_div
+from .operating import OperatingModel
+from .periods import Period
 
 __all__ = [
     "CapitalStructure",
+    "CircularityNotResolved",
+    "DebtPeriod",
+    "DebtSchedule",
     "InterestBasis",
     "Tranche",
+    "TranchePeriod",
     "TrancheKind",
 ]
 
@@ -270,6 +276,11 @@ class CapitalStructure:
     with before any sweep, which is an operating requirement rather than a
     financing one: a business cannot run its payroll out of a revolver it has to
     ask permission to draw.
+
+    ``damping`` is where the fixed-point iteration starts, not where it stays:
+    it is halved whenever a step fails to reduce the residual. Full steps are
+    right for the smooth part of the problem and wrong at a clamp boundary, and
+    the solver cannot know in advance which one it is standing on.
     """
 
     tranches: tuple[Tranche, ...]
@@ -278,8 +289,8 @@ class CapitalStructure:
     base_rate: Driver | None = None
     day_count: DayCount = DayCount.ACT_360
     interest_basis: InterestBasis = InterestBasis.AVERAGE
-    damping: Money = field(default_factory=lambda: money("0.5"))
-    tolerance: Money = field(default_factory=lambda: money("0.000001"))
+    damping: Money = ONE
+    tolerance: Money = field(default_factory=lambda: money("0.000000001"))
     max_iterations: int = 100
 
     @classmethod
@@ -292,8 +303,8 @@ class CapitalStructure:
         base_rate: Driver | None = None,
         day_count: DayCount = DayCount.ACT_360,
         interest_basis: InterestBasis = InterestBasis.AVERAGE,
-        damping: Numeric = "0.5",
-        tolerance: Numeric = "0.000001",
+        damping: Numeric = 1,
+        tolerance: Numeric = "0.000000001",
         max_iterations: int = 100,
     ) -> CapitalStructure:
         return cls(
@@ -383,3 +394,551 @@ class CapitalStructure:
         base = self.base_at(index)
         weighted = sum((t.face * t.rate_at(base) for t in self.tranches), ZERO)
         return safe_div(weighted, drawn, default=ZERO)
+
+
+#: The shortest step the solver will take before giving up. Below this the
+#: iteration is not converging on anything, it is inching towards a boundary it
+#: will never cross, and saying so is more useful than another sixty steps.
+MINIMUM_DAMPING = money("0.015625")
+
+
+class CircularityNotResolved(RuntimeError):
+    """The interest/balance fixed point did not converge.
+
+    Raised rather than returning the last iterate, because an unconverged
+    schedule is not an approximate answer — it is a set of balances that do not
+    reconcile with the interest charged against them.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class TranchePeriod:
+    """What happened to one tranche in one period."""
+
+    name: str
+    kind: TrancheKind
+    rate: Money
+    opening: Money
+    draw: Money
+    cash_interest: Money
+    pik_interest: Money
+    undrawn_fee: Money
+    mandatory_repayment: Money
+    sweep_repayment: Money
+    closing: Money
+
+    @property
+    def total_repayment(self) -> Money:
+        return self.mandatory_repayment + self.sweep_repayment
+
+    @property
+    def total_interest(self) -> Money:
+        """Economic cost for the period, whether or not it was paid in cash."""
+        return self.cash_interest + self.pik_interest
+
+    @property
+    def reconciles(self) -> bool:
+        """Whether the roll-forward closes.
+
+        Checked in tests rather than asserted here: the arithmetic that builds
+        the row is the same arithmetic this would re-run, so an assertion would
+        only prove the engine agrees with itself. It is exposed because a caller
+        assembling rows by hand deserves the check.
+        """
+        expected = (
+            self.opening
+            + self.draw
+            + self.pik_interest
+            - self.mandatory_repayment
+            - self.sweep_repayment
+        )
+        return self.closing == expected
+
+
+@dataclass(frozen=True, slots=True)
+class DebtPeriod:
+    """One column of the debt schedule."""
+
+    period: Period
+    base_rate: Money
+    tranches: tuple[TranchePeriod, ...]
+    opening_cash: Money
+    unlevered_free_cash_flow: Money
+    revolver_draw: Money
+    funding_shortfall: Money
+    closing_cash: Money
+    iterations: int
+    residual: Money
+    damping_used: Money = ONE
+
+    @property
+    def index(self) -> int:
+        return int(self.period.index)
+
+    def tranche(self, name: str) -> TranchePeriod:
+        for row in self.tranches:
+            if row.name == name:
+                return row
+        raise KeyError(f"no tranche named {name!r}")
+
+    @property
+    def opening_debt(self) -> Money:
+        return sum((t.opening for t in self.tranches), ZERO)
+
+    @property
+    def closing_debt(self) -> Money:
+        return sum((t.closing for t in self.tranches), ZERO)
+
+    @property
+    def cash_interest(self) -> Money:
+        return sum((t.cash_interest for t in self.tranches), ZERO)
+
+    @property
+    def pik_interest(self) -> Money:
+        return sum((t.pik_interest for t in self.tranches), ZERO)
+
+    @property
+    def undrawn_fees(self) -> Money:
+        return sum((t.undrawn_fee for t in self.tranches), ZERO)
+
+    @property
+    def mandatory_repayment(self) -> Money:
+        return sum((t.mandatory_repayment for t in self.tranches), ZERO)
+
+    @property
+    def sweep_repayment(self) -> Money:
+        return sum((t.sweep_repayment for t in self.tranches), ZERO)
+
+    @property
+    def total_repayment(self) -> Money:
+        return self.mandatory_repayment + self.sweep_repayment
+
+    @property
+    def cash_cost_of_debt(self) -> Money:
+        """Everything the capital structure took in cash this period."""
+        return self.cash_interest + self.undrawn_fees
+
+    @property
+    def levered_free_cash_flow(self) -> Money:
+        """Cash left after servicing the debt, before repaying any of it."""
+        return self.unlevered_free_cash_flow - self.cash_cost_of_debt
+
+    @property
+    def is_funded(self) -> bool:
+        """Whether the period paid for itself out of cash, flow and the revolver."""
+        return self.funding_shortfall == 0
+
+    @property
+    def net_debt(self) -> Money:
+        return self.closing_debt - self.closing_cash
+
+    def reconciles(self) -> bool:
+        """Whether cash in equals cash out for the period."""
+        expected = (
+            self.opening_cash
+            + self.unlevered_free_cash_flow
+            - self.cash_cost_of_debt
+            - self.total_repayment
+            + self.revolver_draw
+            + self.funding_shortfall
+        )
+        return self.closing_cash == expected
+
+
+def _allocate(pot: Money, balances: list[Money]) -> list[Money]:
+    """Split ``pot`` across ``balances`` pro rata, exactly.
+
+    Every share but the last is computed pro rata and the last takes the
+    remainder. Pro-rating all of them independently would leave a residue of a
+    few billionths whenever the ratio does not terminate, and a residue is
+    precisely what stops a tranche from amortising to zero.
+    """
+    total = sum(balances, ZERO)
+    if total <= 0 or pot <= 0:
+        return [ZERO for _ in balances]
+    payable = min(pot, total)
+    shares: list[Money] = []
+    remaining = payable
+    for balance in balances[:-1]:
+        share = payable * balance / total
+        shares.append(share)
+        remaining -= share
+    shares.append(remaining)
+    return shares
+
+
+@dataclass(frozen=True, slots=True)
+class DebtSchedule:
+    """The capital structure rolled forward across a projection."""
+
+    structure: CapitalStructure
+    periods: tuple[DebtPeriod, ...]
+    opening_cash: Money
+
+    def __len__(self) -> int:
+        return len(self.periods)
+
+    def __iter__(self) -> Iterator[DebtPeriod]:
+        return iter(self.periods)
+
+    def __getitem__(self, index: int) -> DebtPeriod:
+        return self.periods[index]
+
+    @classmethod
+    def run(
+        cls,
+        structure: CapitalStructure,
+        periods: Sequence[Period],
+        unlevered_cash_flows: Sequence[Numeric],
+        *,
+        opening_cash: Numeric = 0,
+    ) -> DebtSchedule:
+        """Roll the structure forward, one period at a time.
+
+        Takes bare periods and cash flows rather than an operating model, so the
+        schedule can be exercised against a hand-written cash-flow series. See
+        :meth:`from_operating_model` for the usual entry point.
+        """
+        if len(periods) != len(unlevered_cash_flows):
+            raise ValueError(
+                f"{len(periods)} periods against {len(unlevered_cash_flows)} cash flows"
+            )
+        if not periods:
+            raise ValueError("a schedule needs at least one period")
+
+        balances = {t.name: t.face for t in structure.tranches}
+        cash = money(opening_cash)
+        if cash < 0:
+            raise ValueError("opening cash must not be negative")
+
+        rows: list[DebtPeriod] = []
+        for i, period in enumerate(periods):
+            row = _solve_period(
+                structure,
+                index=i,
+                period=period,
+                opening=balances,
+                opening_cash=cash,
+                unlevered_free_cash_flow=money(unlevered_cash_flows[i]),
+            )
+            rows.append(row)
+            balances = {t.name: t.closing for t in row.tranches}
+            cash = row.closing_cash
+
+        return cls(structure=structure, periods=tuple(rows), opening_cash=money(opening_cash))
+
+    @classmethod
+    def from_operating_model(
+        cls,
+        structure: CapitalStructure,
+        model: OperatingModel,
+        *,
+        opening_cash: Numeric = 0,
+    ) -> DebtSchedule:
+        """Run the structure against an operating case."""
+        return cls.run(
+            structure,
+            [p.period for p in model],
+            [p.unlevered_free_cash_flow for p in model],
+            opening_cash=opening_cash,
+        )
+
+    # -- Aggregates ------------------------------------------------------
+
+    @property
+    def total_cash_interest(self) -> Money:
+        return sum((p.cash_interest for p in self.periods), ZERO)
+
+    @property
+    def total_pik_interest(self) -> Money:
+        """Interest that never left the account and is owed at exit instead."""
+        return sum((p.pik_interest for p in self.periods), ZERO)
+
+    @property
+    def total_undrawn_fees(self) -> Money:
+        return sum((p.undrawn_fees for p in self.periods), ZERO)
+
+    @property
+    def total_repaid(self) -> Money:
+        return sum((p.total_repayment for p in self.periods), ZERO)
+
+    @property
+    def total_drawn(self) -> Money:
+        return sum((p.revolver_draw for p in self.periods), ZERO)
+
+    @property
+    def opening_debt(self) -> Money:
+        return self.periods[0].opening_debt
+
+    @property
+    def closing_debt(self) -> Money:
+        return self.periods[-1].closing_debt
+
+    @property
+    def closing_cash(self) -> Money:
+        return self.periods[-1].closing_cash
+
+    @property
+    def closing_net_debt(self) -> Money:
+        return self.closing_debt - self.closing_cash
+
+    @property
+    def debt_repaid(self) -> Money:
+        """Gross reduction in the face outstanding across the hold.
+
+        Negative if the structure ended larger than it started, which happens
+        when accretion outruns repayment — the case a PIK instrument exists to
+        create and the one that surprises people at exit.
+        """
+        return self.opening_debt - self.closing_debt
+
+    @property
+    def peak_revolver_drawn(self) -> Money:
+        """The largest revolver balance at any period end.
+
+        The number a credit committee asks for, because a facility that is fully
+        drawn at the low point of the year has no capacity left for the
+        emergency it exists to cover.
+        """
+        drawn = [
+            row.closing
+            for p in self.periods
+            for row in p.tranches
+            if row.kind is TrancheKind.REVOLVER
+        ]
+        return max(drawn, default=ZERO)
+
+    @property
+    def is_funded(self) -> bool:
+        """Whether every period paid for itself."""
+        return all(p.is_funded for p in self.periods)
+
+    @property
+    def first_shortfall(self) -> DebtPeriod | None:
+        """The first period the structure could not fund, if any."""
+        for p in self.periods:
+            if not p.is_funded:
+                return p
+        return None
+
+    @property
+    def max_iterations_used(self) -> int:
+        return max((p.iterations for p in self.periods), default=0)
+
+    @property
+    def max_residual(self) -> Money:
+        return max((p.residual for p in self.periods), default=ZERO)
+
+    @property
+    def shortest_step_taken(self) -> Money:
+        """The smallest damping any period needed.
+
+        Anything below one says a period met a clamp boundary and the solver had
+        to shorten its stride to get past it.
+        """
+        return min((p.damping_used for p in self.periods), default=ONE)
+
+    def balances_at(self, index: int) -> dict[str, Money]:
+        """Closing balance per tranche at period ``index``, zero-based."""
+        return {row.name: row.closing for row in self.periods[index].tranches}
+
+    def leverage_at(self, index: int, ebitda: Numeric) -> Money:
+        """Closing debt as a multiple of the EBITDA supplied for that period."""
+        return safe_div(self.periods[index].closing_debt, money(ebitda), default=ZERO)
+
+    def net_leverage_at(self, index: int, ebitda: Numeric) -> Money:
+        return safe_div(self.periods[index].net_debt, money(ebitda), default=ZERO)
+
+
+def _one_pass(
+    structure: CapitalStructure,
+    *,
+    index: int,
+    period: Period,
+    opening: dict[str, Money],
+    opening_cash: Money,
+    unlevered_free_cash_flow: Money,
+    guess: dict[str, Money],
+) -> DebtPeriod:
+    """Run a period once, taking ``guess`` as the closing balances interest accrues on.
+
+    Under :attr:`InterestBasis.OPENING` the guess is ignored and the pass is the
+    answer. Under ``AVERAGE`` it is one step of the iteration that finds the
+    balances consistent with the interest they generate.
+    """
+    year_fraction = period.year_fraction(structure.day_count)
+    base = structure.base_at(index)
+    half = money(2)
+
+    accrual_base: dict[str, Money] = {}
+    cash_interest: dict[str, Money] = {}
+    pik_interest: dict[str, Money] = {}
+    undrawn_fee: dict[str, Money] = {}
+    mandatory: dict[str, Money] = {}
+
+    for tranche in structure:
+        start = opening[tranche.name]
+        if structure.interest_basis is InterestBasis.AVERAGE:
+            accrual = (start + guess[tranche.name]) / half
+        else:
+            accrual = start
+        # A balance driven negative by a bad guess would generate negative
+        # interest, which is not a thing; the fixed point is approached from
+        # above, so clamping here only affects intermediate iterates.
+        accrual = max(accrual, ZERO)
+        accrual_base[tranche.name] = accrual
+
+        cash_interest[tranche.name] = tranche.rate_at(base) * year_fraction * accrual
+        pik_interest[tranche.name] = tranche.pik_rate * year_fraction * accrual
+        undrawn = max(tranche.undrawn_at(accrual), ZERO)
+        undrawn_fee[tranche.name] = tranche.undrawn_fee * year_fraction * undrawn
+
+        owed = start + pik_interest[tranche.name]
+        if tranche.maturity is not None and period.index >= tranche.maturity:
+            due = owed
+        else:
+            due = min(tranche.scheduled_amortisation(index), owed)
+        mandatory[tranche.name] = max(due, ZERO)
+
+    cash_cost = sum(cash_interest.values(), ZERO) + sum(undrawn_fee.values(), ZERO)
+    after_service = opening_cash + unlevered_free_cash_flow - cash_cost
+    after_mandatory = after_service - sum(mandatory.values(), ZERO)
+
+    draw: dict[str, Money] = {t.name: ZERO for t in structure}
+    shortfall = ZERO
+    need = structure.minimum_cash - after_mandatory
+    if need > 0:
+        revolvers = [t for t in structure if t.is_revolving]
+        capacity = [
+            max(t.commitment - (opening[t.name] + pik_interest[t.name] - mandatory[t.name]), ZERO)
+            for t in revolvers
+        ]
+        drawn = _allocate(need, capacity)
+        for tranche, amount in zip(revolvers, drawn):
+            draw[tranche.name] = amount
+        total_drawn = sum(drawn, ZERO)
+        shortfall = need - total_drawn
+        after_mandatory += total_drawn
+
+    sweep: dict[str, Money] = {t.name: ZERO for t in structure}
+    surplus = max(after_mandatory - structure.minimum_cash, ZERO)
+    pot = surplus * structure.sweep_rate
+    for _, group in structure.sweep_order:
+        if pot <= 0:
+            break
+        balances = [
+            max(
+                opening[t.name]
+                + pik_interest[t.name]
+                + draw[t.name]
+                - mandatory[t.name],
+                ZERO,
+            )
+            for t in group
+        ]
+        for tranche, amount in zip(group, _allocate(pot, balances)):
+            sweep[tranche.name] = amount
+            pot -= amount
+
+    rows = tuple(
+        TranchePeriod(
+            name=t.name,
+            kind=t.kind,
+            rate=t.rate_at(base),
+            opening=opening[t.name],
+            draw=draw[t.name],
+            cash_interest=cash_interest[t.name],
+            pik_interest=pik_interest[t.name],
+            undrawn_fee=undrawn_fee[t.name],
+            mandatory_repayment=mandatory[t.name],
+            sweep_repayment=sweep[t.name],
+            closing=(
+                opening[t.name]
+                + draw[t.name]
+                + pik_interest[t.name]
+                - mandatory[t.name]
+                - sweep[t.name]
+            ),
+        )
+        for t in structure
+    )
+
+    return DebtPeriod(
+        period=period,
+        base_rate=base,
+        tranches=rows,
+        opening_cash=opening_cash,
+        unlevered_free_cash_flow=unlevered_free_cash_flow,
+        revolver_draw=sum(draw.values(), ZERO),
+        funding_shortfall=shortfall,
+        closing_cash=after_mandatory - sum(sweep.values(), ZERO),
+        iterations=1,
+        residual=ZERO,
+    )
+
+
+def _solve_period(
+    structure: CapitalStructure,
+    *,
+    index: int,
+    period: Period,
+    opening: dict[str, Money],
+    opening_cash: Money,
+    unlevered_free_cash_flow: Money,
+) -> DebtPeriod:
+    """Find the closing balances consistent with the interest they generate.
+
+    The map is a contraction for any realistic coupon — one turn of the loop
+    moves the balance by the interest on half the change, which is a few tens of
+    basis points of it — so undamped iteration would converge in a handful of
+    steps on a smooth problem. This problem is not smooth: repayments are capped
+    at balances, sweeps are capped at available cash, and a revolver draw
+    switches on at a threshold. Those clamps let an undamped step jump between
+    two regimes and sit there alternating, so the update is damped, which turns
+    the alternation into a convergent average of the two. So the step starts
+    full and is halved whenever it fails to reduce the residual, which keeps the
+    smooth case fast without giving up on the clamped one.
+    """
+    if structure.interest_basis is InterestBasis.OPENING:
+        return _one_pass(
+            structure,
+            index=index,
+            period=period,
+            opening=opening,
+            opening_cash=opening_cash,
+            unlevered_free_cash_flow=unlevered_free_cash_flow,
+            guess=opening,
+        )
+
+    guess = dict(opening)
+    damping = structure.damping
+    previous: Money | None = None
+    for iteration in range(1, structure.max_iterations + 1):
+        result = _one_pass(
+            structure,
+            index=index,
+            period=period,
+            opening=opening,
+            opening_cash=opening_cash,
+            unlevered_free_cash_flow=unlevered_free_cash_flow,
+            guess=guess,
+        )
+        produced = {row.name: row.closing for row in result.tranches}
+        residual = max((abs(produced[k] - guess[k]) for k in guess), default=ZERO)
+        if residual <= structure.tolerance:
+            return replace(
+                result, iterations=iteration, residual=residual, damping_used=damping
+            )
+        if previous is not None and residual >= previous and damping > MINIMUM_DAMPING:
+            # The step did not help. Either the iteration is oscillating between
+            # two clamp regimes or it overshot; both are answered by a shorter
+            # step, and halving is enough to break either.
+            damping = damping / money(2)
+        previous = residual
+        guess = {k: guess[k] + damping * (produced[k] - guess[k]) for k in guess}
+
+    raise CircularityNotResolved(
+        f"period {period.index}: interest and balances did not settle within "
+        f"{structure.max_iterations} iterations; the structure may be accreting "
+        f"faster than the cash flow can service it"
+    )
