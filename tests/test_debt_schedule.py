@@ -248,6 +248,37 @@ class TestTheRevolver:
         assert row.funding_shortfall == money(30)
         assert not row.is_funded
 
+    def test_a_gap_is_plugged_to_zero_rather_than_carried_forward_negative(self) -> None:
+        # The gap is reported and notionally funded. Carrying a negative cash
+        # balance into the next period would re-report the same deficit every
+        # period and shrink every later sweep by an amount already accounted for.
+        s = structure(
+            fixed("Revolver", TrancheKind.REVOLVER, 0, cash_rate="0.03", commitment=20),
+            fixed("Senior notes", TrancheKind.NOTES, 400, cash_rate="0.10"),
+            minimum_cash=10,
+            interest_basis=InterestBasis.OPENING,
+        )
+        schedule = DebtSchedule.run(s, one_year_grid(4), [-10, -10, -10, 500])
+        assert [p.closing_cash for p in schedule.periods[:3]] == [money(0)] * 3
+        # Each period reports the new money it needed, not the running total.
+        assert schedule[1].funding_shortfall < schedule[0].funding_shortfall + money(30)
+        for period in schedule:
+            assert period.reconciles()
+
+    def test_falling_below_the_minimum_is_not_the_same_as_running_out(self) -> None:
+        s = structure(
+            fixed("Senior notes", TrancheKind.NOTES, 400, cash_rate="0.05"),
+            minimum_cash=100,
+            interest_basis=InterestBasis.OPENING,
+        )
+        row = DebtSchedule.run(s, [YEAR], [-50], opening_cash=100)[0]
+        # 30 of cash left: a policy breach, not a funding gap.
+        assert row.closing_cash == money(30)
+        assert row.funding_shortfall == money(0)
+        assert row.cash_below_minimum == money(70)
+        assert row.is_funded
+        assert not row.meets_minimum_cash
+
     def test_a_structure_with_no_revolver_is_simply_short(self) -> None:
         s = structure(
             fixed("Senior notes", TrancheKind.NOTES, 400, cash_rate="0.10"),
@@ -255,8 +286,10 @@ class TestTheRevolver:
         )
         schedule = DebtSchedule.run(s, [YEAR], [-10])
         assert schedule[0].funding_shortfall == money(50)
+        assert schedule[0].closing_cash == money(0)
         assert not schedule.is_funded
         assert schedule.first_shortfall is schedule[0]
+        assert schedule.total_shortfall == money(50)
 
     def test_the_commitment_fee_is_charged_on_what_is_not_drawn(self) -> None:
         s = structure(
@@ -309,6 +342,8 @@ class TestMaturity:
         schedule = DebtSchedule.run(s, one_year_grid(1), [10])
         assert schedule[0].funding_shortfall == money(90)
         assert schedule[0].closing_debt == money(0)
+        assert schedule[0].closing_cash == money(0)
+        assert schedule[0].reconciles()
 
 
 class TestFloatingRates:

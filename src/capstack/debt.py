@@ -471,6 +471,7 @@ class DebtPeriod:
     unlevered_free_cash_flow: Money
     revolver_draw: Money
     funding_shortfall: Money
+    cash_below_minimum: Money
     closing_cash: Money
     iterations: int
     residual: Money
@@ -530,8 +531,18 @@ class DebtPeriod:
 
     @property
     def is_funded(self) -> bool:
-        """Whether the period paid for itself out of cash, flow and the revolver."""
+        """Whether the period paid for itself out of cash, flow and the revolver.
+
+        A solvency test, not a policy one. A business that ends the period on
+        less cash than its own minimum but still on more than nothing has funded
+        itself; see :attr:`meets_minimum_cash` for the policy.
+        """
         return self.funding_shortfall == 0
+
+    @property
+    def meets_minimum_cash(self) -> bool:
+        """Whether the period closed on at least the minimum cash balance."""
+        return self.cash_below_minimum == 0
 
     @property
     def net_debt(self) -> Money:
@@ -737,6 +748,16 @@ class DebtSchedule:
         return None
 
     @property
+    def total_shortfall(self) -> Money:
+        """New money the structure needed and could not raise, across the hold."""
+        return sum((p.funding_shortfall for p in self.periods), ZERO)
+
+    @property
+    def holds_minimum_cash(self) -> bool:
+        """Whether every period closed on at least the minimum cash balance."""
+        return all(p.meets_minimum_cash for p in self.periods)
+
+    @property
     def max_iterations_used(self) -> int:
         return max((p.iterations for p in self.periods), default=0)
 
@@ -820,7 +841,6 @@ def _one_pass(
     after_mandatory = after_service - sum(mandatory.values(), ZERO)
 
     draw: dict[str, Money] = {t.name: ZERO for t in structure}
-    shortfall = ZERO
     need = structure.minimum_cash - after_mandatory
     if need > 0:
         revolvers = [t for t in structure if t.is_revolving]
@@ -831,9 +851,17 @@ def _one_pass(
         drawn = _allocate(need, capacity)
         for tranche, amount in zip(revolvers, drawn):
             draw[tranche.name] = amount
-        total_drawn = sum(drawn, ZERO)
-        shortfall = need - total_drawn
-        after_mandatory += total_drawn
+        after_mandatory += sum(drawn, ZERO)
+
+    # Two different failures, which the model keeps apart because a lender does.
+    # Ending below the minimum cash balance breaches a policy; ending below zero
+    # means the period's bills went unpaid. Only the second is a funding gap,
+    # and it is plugged notionally so the periods after it remain readable —
+    # a schedule that carries a negative cash balance forward compounds a
+    # deficit it has already reported and understates every later sweep.
+    shortfall = max(-after_mandatory, ZERO)
+    after_mandatory += shortfall
+    below_minimum = max(structure.minimum_cash - after_mandatory, ZERO)
 
     sweep: dict[str, Money] = {t.name: ZERO for t in structure}
     surplus = max(after_mandatory - structure.minimum_cash, ZERO)
@@ -886,6 +914,7 @@ def _one_pass(
         unlevered_free_cash_flow=unlevered_free_cash_flow,
         revolver_draw=sum(draw.values(), ZERO),
         funding_shortfall=shortfall,
+        cash_below_minimum=below_minimum,
         closing_cash=after_mandatory - sum(sweep.values(), ZERO),
         iterations=1,
         residual=ZERO,
