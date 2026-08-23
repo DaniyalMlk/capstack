@@ -7,11 +7,13 @@ for, how the purchase is funded, what the operating case throws off, how the deb
 gets paid down, whether the covenants hold, and what the sponsor makes on the way
 out.
 
-Status: early. Three layers are in — the numerics (exact money, day counts,
-period grids, the return measures), the transaction (entry valuation, a sources
-and uses table that balances, and the opening balance sheet after the
-recapitalisation), and the operating case (drivers through to unlevered free
-cash flow). The debt schedule is next; see [ROADMAP.md](ROADMAP.md).
+Status: four layers are in — the numerics (exact money, day counts, period
+grids, the return measures), the transaction (entry valuation, a sources and
+uses table that balances, and the opening balance sheet after the
+recapitalisation), the operating case (drivers through to unlevered free cash
+flow), and the capital structure (interest, amortisation, a cash sweep by
+seniority and a revolver that runs both ways). Covenants are next; see
+[ROADMAP.md](ROADMAP.md).
 
 ## Install
 
@@ -145,6 +147,43 @@ Project Meridian - operating case
   Cash conversion                   45.7%     49.0%     52.0%     54.9%     57.6%
 ```
 
+And it carries the capital structure, which is where the cash actually goes:
+
+```console
+$ capstack schedule examples/meridian.json
+Project Meridian - debt schedule
+================================
+
+                                      P1         P2         P3         P4         P5
+                                 2027-06    2028-06    2029-06    2030-06    2031-06
+  ----------------------------------------------------------------------------------
+  Unlevered free cash flow        119.59     142.71     166.65     190.72     214.17
+  Cash interest                  -141.32    -138.62    -134.06    -127.95    -120.00
+  Commitment fees                  -0.73      -0.67      -0.70      -0.76      -0.76
+  Levered free cash flow          -22.45       3.42      31.89      62.01      93.42
+
+  Mandatory repayment             -11.50     -11.50     -11.50     -11.50     -11.50
+  Cash sweep                        0.00       0.00     -20.39     -50.51     -81.92
+  Revolver draw                    13.95       8.08       0.00       0.00       0.00
+  Closing cash                     40.00      40.00      40.00      40.00      40.00
+
+  Accrued to balances              11.67      12.25      12.79      13.39      14.01
+  Closing debt                  1,864.12   1,872.95   1,853.85   1,805.23   1,725.82
+
+  Closing balances
+  Revolving credit facility        13.95      22.03       1.64       0.00       0.00
+  Term Loan B                   1,138.50   1,127.00   1,115.50   1,055.13     961.71
+  Senior secured notes            450.00     450.00     450.00     450.00     450.00
+  Second lien                     261.67     273.92     286.71     300.10     314.11
+
+  Leverage                         7.12x      6.43x      5.79x      5.19x      4.64x
+  Base rate                        4.25%      3.94%      3.62%      3.31%      3.00%
+```
+
+The first two years are the interesting part: levered free cash flow is
+negative, the revolver funds the gap, the second lien accrues rather than pays,
+and total debt goes *up* before the operating case grows into the structure.
+
 See [`examples/meridian.json`](examples/meridian.json) for the input. Assumption
 series are written the way an operating case is actually described — a bare
 number for something flat, `{"ramp": [0.085, 0.035]}` for growth that tapers, or
@@ -215,6 +254,38 @@ percentage of taxable income — 80% by default, matching the limitation on US
 losses arising from 2018 onward — so a company with large historic losses still
 writes a cheque the moment it turns profitable. Modelling the pool without the
 cap overstates cash in precisely the years a sponsor is counting on it.
+
+**The interest/balance circularity is solved, not avoided.** Accrue interest on
+the average of the opening and closing balance — the right convention when
+repayments are spread through the period — and the closing balance depends on
+what was repaid, which depends on the cash left after interest, which depends on
+the balance the interest was accrued on. Once repayments are capped at balances
+and sweeps at available cash there is no closed form, so the engine iterates to
+a fixed point and reports the residual it reached. The alternative, accruing on
+the opening balance, overstates interest in every period a structure
+deleverages — which is every period a buyout is working.
+
+The map contracts by roughly `rate x year_fraction / 2` per turn, so a full step
+settles in about ten iterations; the step is halved if it ever fails to reduce
+the residual. Where no fixed point exists — a PIK rate at or past the pole at
+`pik_rate x year_fraction = 2` — the engine raises rather than returning its last
+iterate, because an unconverged schedule is not an approximate answer, it is a
+set of balances that do not reconcile with the interest charged against them.
+
+**A cash sweep is measured on the period's excess cash flow.** Not on the cash
+balance. Cash that a partial sweep deliberately left behind is not excess cash
+flow any more, and a credit agreement does not reach it again at the next test
+date. Sweeping the balance instead takes back half the retained cash next
+period, then half of that, until a negotiated 50% sweep has quietly become a
+100% one — which makes the sweep percentage, the most argued-over number in the
+credit agreement, do nothing at all.
+
+**Falling below the minimum cash balance is not the same as running out.** A
+business that ends a period on less cash than its own policy requires has a
+covenant conversation ahead of it. One that ends below zero has an unpaid bill.
+The model reports them separately, and plugs only the second — notionally, and
+by name — so the periods after it stay readable instead of compounding a deficit
+that has already been reported.
 
 **Debt is carried at face, not at proceeds.** A tranche placed at 99.5 raises
 99.5 and owes 100. The half-point is a use of funds. Carrying the tranche at

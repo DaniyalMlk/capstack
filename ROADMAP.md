@@ -31,10 +31,10 @@ would actually read.
 
 ## Phase 4 — Capital structure and the debt schedule
 
-- [ ] Tranche model: revolver, term loans, notes, mezzanine, seller paper
-- [ ] Mandatory amortisation, PIK accrual and cash interest
-- [ ] Cash sweep waterfall by seniority, with pro-rata treatment inside a class
-- [ ] Resolution of the interest/balance circularity by damped iteration
+- [x] Tranche model: revolver, term loans, notes, mezzanine, seller paper
+- [x] Mandatory amortisation, PIK accrual and cash interest
+- [x] Cash sweep waterfall by seniority, with pro-rata treatment inside a class
+- [x] Resolution of the interest/balance circularity by damped iteration
 
 ## Phase 5 — Covenants
 
