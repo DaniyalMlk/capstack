@@ -359,6 +359,47 @@ class TestMaturity:
         assert schedule[1].mandatory_repayment == money(100)
         assert schedule[2].closing_debt == money(0)
 
+    def test_a_matured_facility_cannot_be_drawn_again(self) -> None:
+        # Repaying a facility at maturity does not make it available again. A
+        # model that keeps the commitment alive will clear the balance and
+        # redraw it in the same period, and go on doing so indefinitely.
+        s = structure(
+            fixed(
+                "Revolver",
+                TrancheKind.REVOLVER,
+                0,
+                cash_rate="0.05",
+                commitment=100,
+                undrawn_fee="0.005",
+                maturity=2,
+            ),
+            fixed("Senior notes", TrancheKind.NOTES, 400, cash_rate="0.10"),
+            interest_basis=InterestBasis.OPENING,
+        )
+        schedule = DebtSchedule.run(s, one_year_grid(4), [50, 50, -10, -10])
+        assert schedule[2].revolver_draw == money(0)
+        assert schedule[2].tranche("Revolver").undrawn_fee == money(0)
+        assert schedule[3].tranche("Revolver").closing == money(0)
+        # With no facility left, the shortfall is reported rather than papered over.
+        assert schedule[2].funding_shortfall > money(0)
+
+    def test_a_maturing_balance_owes_a_full_period_of_interest(self) -> None:
+        # It is repaid at the end of the period, not across it, so averaging it
+        # against a closing balance of zero would halve the interest in the
+        # period carrying the largest repayment in the model.
+        tranche = fixed(
+            "Term Loan A", TrancheKind.TERM_LOAN, 1000, cash_rate="0.08", maturity=1,
+            swept=False,
+        )
+        opening_basis = DebtSchedule.run(
+            structure(tranche, interest_basis=InterestBasis.OPENING), [YEAR], [2000]
+        )
+        average_basis = DebtSchedule.run(
+            structure(tranche, interest_basis=InterestBasis.AVERAGE), [YEAR], [2000]
+        )
+        assert opening_basis[0].cash_interest == money(80)
+        assert average_basis[0].cash_interest == money(80)
+
     def test_maturity_the_cash_flow_cannot_meet_is_reported_short(self) -> None:
         s = structure(
             fixed("Term Loan A", TrancheKind.TERM_LOAN, 100, maturity=1, swept=False),

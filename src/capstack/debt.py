@@ -265,9 +265,24 @@ class Tranche:
             return ZERO
         return self.face * self.amortisation.at(index)
 
-    def undrawn_at(self, drawn: Money) -> Money:
-        """Commitment not currently drawn. Zero for anything but a revolver."""
-        if not self.is_revolving:
+    def has_matured(self, index: int) -> bool:
+        """Whether period ``index`` is at or past this tranche's maturity.
+
+        ``index`` is zero-based across the schedule, matching how every other
+        series is read, so period one is index zero and a tranche maturing in
+        period three has matured from index two onward.
+        """
+        return self.maturity is not None and index + 1 >= self.maturity
+
+    def undrawn_at(self, drawn: Money, index: int = 0) -> Money:
+        """Commitment not currently drawn. Zero for anything but a revolver.
+
+        A matured facility has no commitment left. Repaying it does not make it
+        available again, which is what a model that keeps its commitment alive
+        past maturity will happily do — repay the balance in full and redraw it
+        in the same period, forever.
+        """
+        if not self.is_revolving or self.has_matured(index):
             return ZERO
         return self.commitment - drawn
 
@@ -814,9 +829,14 @@ def _one_pass(
 
     for tranche in structure:
         start = opening[tranche.name]
-        if structure.interest_basis is InterestBasis.AVERAGE:
+        matured = tranche.has_matured(index)
+        if structure.interest_basis is InterestBasis.AVERAGE and not matured:
             accrual = (start + guess[tranche.name]) / half
         else:
+            # A maturing balance is repaid at the end of the period rather than
+            # across it, so it owes a full period of interest. Averaging it with
+            # a closing balance of zero halves the interest in the period that
+            # carries the single largest repayment in the model.
             accrual = start
         # A balance driven negative by a bad guess would generate negative
         # interest, which is not a thing; the fixed point is approached from
@@ -826,11 +846,11 @@ def _one_pass(
 
         cash_interest[tranche.name] = tranche.rate_at(base) * year_fraction * accrual
         pik_interest[tranche.name] = tranche.pik_rate * year_fraction * accrual
-        undrawn = max(tranche.undrawn_at(accrual), ZERO)
+        undrawn = max(tranche.undrawn_at(accrual, index), ZERO)
         undrawn_fee[tranche.name] = tranche.undrawn_fee * year_fraction * undrawn
 
         owed = start + pik_interest[tranche.name]
-        if tranche.maturity is not None and period.index >= tranche.maturity:
+        if matured:
             due = owed
         else:
             due = min(tranche.scheduled_amortisation(index), owed)
@@ -845,7 +865,12 @@ def _one_pass(
     if need > 0:
         revolvers = [t for t in structure if t.is_revolving]
         capacity = [
-            max(t.commitment - (opening[t.name] + pik_interest[t.name] - mandatory[t.name]), ZERO)
+            ZERO
+            if t.has_matured(index)
+            else max(
+                t.commitment - (opening[t.name] + pik_interest[t.name] - mandatory[t.name]),
+                ZERO,
+            )
             for t in revolvers
         ]
         drawn = _allocate(need, capacity)
