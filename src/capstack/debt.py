@@ -276,8 +276,8 @@ class Tranche:
 class CapitalStructure:
     """The whole stack, plus the rules that govern how cash moves through it.
 
-    ``sweep_rate`` is the share of surplus cash applied to debt rather than left
-    on the balance sheet. ``minimum_cash`` is the balance the business is left
+    ``sweep_rate`` is the share of the period's excess cash flow applied to debt
+    rather than left on the balance sheet. ``minimum_cash`` is the balance the business is left
     with before any sweep, which is an operating requirement rather than a
     financing one: a business cannot run its payroll out of a revolver it has to
     ask permission to draw.
@@ -864,8 +864,18 @@ def _one_pass(
     below_minimum = max(structure.minimum_cash - after_mandatory, ZERO)
 
     sweep: dict[str, Money] = {t.name: ZERO for t in structure}
-    surplus = max(after_mandatory - structure.minimum_cash, ZERO)
-    pot = surplus * structure.sweep_rate
+    # The sweep is a share of *this period's* excess cash flow, not of the whole
+    # cash balance. Cash retained by a partial sweep in an earlier period is no
+    # longer excess cash flow and a credit agreement does not reach it again;
+    # sweeping the balance instead would take the retained half back at the next
+    # test date, and the half after that, until a 50% sweep had quietly become
+    # a 100% one. What is available to pay with is still capped by the cash on
+    # hand above the minimum, because a sweep cannot spend money that is not there.
+    excess = max(
+        unlevered_free_cash_flow - cash_cost - sum(mandatory.values(), ZERO), ZERO
+    )
+    available = max(after_mandatory - structure.minimum_cash, ZERO)
+    pot = min(excess * structure.sweep_rate, available)
     for _, group in structure.sweep_order:
         if pot <= 0:
             break

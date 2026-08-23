@@ -106,6 +106,31 @@ class TestInterestOnTheOpeningBalance:
         assert row.sweep_repayment == money(15)
         assert row.closing_cash == money(5)
 
+    def test_a_partial_sweep_does_not_come_back_for_the_rest_next_period(self) -> None:
+        # A 50% sweep on 100 of excess cash flow repays 50 and leaves 50. If the
+        # sweep took a share of the whole cash balance instead, it would take
+        # 25 of that retained 50 next period, then 12.50, and a 50% sweep would
+        # quietly become a 100% one over a normal hold.
+        s = structure(
+            fixed("Term Loan B", TrancheKind.TERM_LOAN, 1000, swept=True),
+            sweep_rate="0.5",
+            interest_basis=InterestBasis.OPENING,
+        )
+        schedule = DebtSchedule.run(s, one_year_grid(4), [100, 0, 0, 0])
+        assert [p.sweep_repayment for p in schedule] == [money(50)] + [money(0)] * 3
+        assert schedule.closing_cash == money(50)
+
+    def test_the_sweep_cannot_spend_cash_that_is_not_there(self) -> None:
+        # Excess cash flow of 30, but the minimum balance leaves only 8 of it
+        # actually available to pay with.
+        s = structure(
+            fixed("Term Loan B", TrancheKind.TERM_LOAN, 100, cash_rate="0.10", swept=True),
+            minimum_cash=12,
+            interest_basis=InterestBasis.OPENING,
+        )
+        row = DebtSchedule.run(s, [YEAR], [30])[0]
+        assert row.sweep_repayment == money(8)
+
     def test_the_minimum_cash_balance_is_held_back_from_the_sweep(self) -> None:
         s = structure(
             fixed("Term Loan B", TrancheKind.TERM_LOAN, 100, cash_rate="0.10", swept=True),
