@@ -208,6 +208,11 @@ class Tranche:
             raise ValueError(f"{self.name}: the base-rate floor must not be negative")
         if self.undrawn_fee < 0:
             raise ValueError(f"{self.name}: the commitment fee must not be negative")
+        if self.undrawn_fee and not self.is_revolving:
+            raise ValueError(
+                f"{self.name}: a commitment fee is charged on undrawn capacity, and only "
+                f"a revolving facility has any"
+            )
         if self.seniority < 0:
             raise ValueError(f"{self.name}: seniority must not be negative")
         if self.commitment < 0:
@@ -548,22 +553,32 @@ class DebtPeriod:
 def _allocate(pot: Money, balances: list[Money]) -> list[Money]:
     """Split ``pot`` across ``balances`` pro rata, exactly.
 
-    Every share but the last is computed pro rata and the last takes the
-    remainder. Pro-rating all of them independently would leave a residue of a
-    few billionths whenever the ratio does not terminate, and a residue is
+    Every share but one is computed pro rata and the remaining claim takes what
+    is left over. Pro-rating all of them independently would leave a residue of
+    a few billionths whenever the ratio does not terminate, and a residue is
     precisely what stops a tranche from amortising to zero.
+
+    The remainder goes to the last claim with something outstanding, never
+    simply to the last in the list. A tranche already at zero is entitled to
+    nothing, and handing it the rounding dust gives it a balance of a few
+    billionths — of either sign — that nothing afterwards can clear, because
+    both the repayment and the balance are floored at zero.
     """
     total = sum(balances, ZERO)
     if total <= 0 or pot <= 0:
         return [ZERO for _ in balances]
     payable = min(pot, total)
-    shares: list[Money] = []
+    plug = max(i for i, balance in enumerate(balances) if balance > 0)
+
+    shares = [ZERO for _ in balances]
     remaining = payable
-    for balance in balances[:-1]:
+    for i, balance in enumerate(balances):
+        if i == plug or balance <= 0:
+            continue
         share = payable * balance / total
-        shares.append(share)
+        shares[i] = share
         remaining -= share
-    shares.append(remaining)
+    shares[plug] = min(max(remaining, ZERO), balances[plug])
     return shares
 
 

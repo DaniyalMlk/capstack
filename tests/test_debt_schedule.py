@@ -577,6 +577,27 @@ class TestExactness:
         schedule = DebtSchedule.run(s, one_year_grid(3), [500, 500, 500])
         assert schedule.closing_debt == Decimal(0)
 
+    def test_a_tranche_at_zero_is_not_handed_the_rounding_dust(self) -> None:
+        # Pro-rating an awkward pot across three live claims leaves a residue
+        # that has to land somewhere. It must not land on the fourth, which is
+        # entitled to nothing: both the repayment and the balance floor at zero,
+        # so a few billionths there can never be cleared again.
+        s = structure(
+            *(
+                fixed(name, TrancheKind.TERM_LOAN, face, seniority=1, swept=True)
+                for name, face in (("A", 87577), ("B", 81955), ("C", 150), ("D", 0))
+            ),
+            interest_basis=InterestBasis.OPENING,
+        )
+        row = DebtSchedule.run(s, [YEAR], [80203])[0]
+        assert row.tranche("D").sweep_repayment == ZERO
+        assert row.tranche("D").closing == ZERO
+        assert row.sweep_repayment == money(80203)
+
+    def test_a_commitment_fee_needs_a_commitment_to_be_charged_on(self) -> None:
+        with pytest.raises(ValueError, match="only a revolving facility has any"):
+            fixed("Term Loan B", TrancheKind.TERM_LOAN, 100, undrawn_fee="0.005")
+
     def test_a_three_way_pro_rata_sweep_leaves_no_residue(self) -> None:
         s = structure(
             *(
