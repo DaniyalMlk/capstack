@@ -41,7 +41,16 @@ from enum import Enum
 
 from .daycount import DayCount
 from .drivers import Driver
-from .money import ONE, ZERO, Money, Numeric, is_close, money, safe_div
+from .money import (
+    ONE,
+    ZERO,
+    Money,
+    Numeric,
+    allocate_pro_rata,
+    is_close,
+    money,
+    safe_div,
+)
 from .operating import OperatingModel
 from .periods import Period
 
@@ -697,38 +706,6 @@ class DebtPeriod:
         return is_close(self.closing_cash, expected, tolerance=tolerance)
 
 
-def _allocate(pot: Money, balances: list[Money]) -> list[Money]:
-    """Split ``pot`` across ``balances`` pro rata, exactly.
-
-    Every share but one is computed pro rata and the remaining claim takes what
-    is left over. Pro-rating all of them independently would leave a residue of
-    a few billionths whenever the ratio does not terminate, and a residue is
-    precisely what stops a tranche from amortising to zero.
-
-    The remainder goes to the last claim with something outstanding, never
-    simply to the last in the list. A tranche already at zero is entitled to
-    nothing, and handing it the rounding dust gives it a balance of a few
-    billionths — of either sign — that nothing afterwards can clear, because
-    both the repayment and the balance are floored at zero.
-    """
-    total = sum(balances, ZERO)
-    if total <= 0 or pot <= 0:
-        return [ZERO for _ in balances]
-    payable = min(pot, total)
-    plug = max(i for i, balance in enumerate(balances) if balance > 0)
-
-    shares = [ZERO for _ in balances]
-    remaining = payable
-    for i, balance in enumerate(balances):
-        if i == plug or balance <= 0:
-            continue
-        share = payable * balance / total
-        shares[i] = share
-        remaining -= share
-    shares[plug] = min(max(remaining, ZERO), balances[plug])
-    return shares
-
-
 @dataclass(frozen=True, slots=True)
 class DebtSchedule:
     """The capital structure rolled forward across a projection."""
@@ -1038,7 +1015,7 @@ def _one_pass(
             )
             for t in revolvers
         ]
-        drawn = _allocate(need, capacity)
+        drawn = allocate_pro_rata(need, capacity)
         for tranche, amount in zip(revolvers, drawn):
             draw[tranche.name] = amount
         after_mandatory += sum(drawn, ZERO)
@@ -1079,7 +1056,7 @@ def _one_pass(
             )
             for t in group
         ]
-        for tranche, amount in zip(group, _allocate(pot, balances)):
+        for tranche, amount in zip(group, allocate_pro_rata(pot, balances)):
             sweep[tranche.name] = amount
             pot -= amount
 

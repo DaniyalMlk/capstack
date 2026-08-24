@@ -176,5 +176,31 @@
       "threshold": 1.0,
       "first_test_period": 2
     }
-  ]
+  ],
+  "exit": {
+    "multiple": 11.0,
+    "fee_rate": 0.0075,
+    "equity": [
+      {
+        "name": "Sponsor preferred",
+        "kind": "preferred",
+        "of": "sponsor",
+        "share": 0.85,
+        "preferred_rate": 0.08
+      },
+      {
+        "name": "Sponsor common",
+        "kind": "common",
+        "of": "sponsor",
+        "share": 0.15,
+        "ownership": 0.82
+      },
+      {
+        "name": "Management rollover",
+        "kind": "common",
+        "of": "rollover",
+        "ownership": 0.18
+      }
+    ]
+  }
 }

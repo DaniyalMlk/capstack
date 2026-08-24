@@ -28,13 +28,22 @@ from .debt import (
     TrancheKind,
 )
 from .drivers import Driver
-from .money import Money, money, quantize, rate
+from .money import Money, allocate_pro_rata, money, quantize, rate
 from .operating import (
     OperatingAssumptions,
     OperatingModel,
     OperatingPeriod,
     TaxResult,
     apply_carryforward,
+)
+from .outcome import (
+    Attribution,
+    ExitValuation,
+    Outcome,
+    Security,
+    SecurityKind,
+    SecurityOutcome,
+    default_securities,
 )
 from .periods import Frequency, Period, PeriodGrid
 from .returns import (
@@ -62,6 +71,7 @@ __version__ = "0.1.0"
 
 __all__ = [
     "AmbiguousIRR",
+    "Attribution",
     "BalanceSheetError",
     "CapitalStructure",
     "CashFlow",
@@ -79,6 +89,7 @@ __all__ = [
     "Direction",
     "Driver",
     "EntryValuation",
+    "ExitValuation",
     "Frequency",
     "IRRError",
     "InterestBasis",
@@ -90,9 +101,13 @@ __all__ = [
     "OperatingAssumptions",
     "OperatingModel",
     "OperatingPeriod",
+    "Outcome",
     "Period",
     "PeriodGrid",
     "PurchaseAccounting",
+    "Security",
+    "SecurityKind",
+    "SecurityOutcome",
     "SourcesAndUses",
     "SweepGrid",
     "SweepStep",
@@ -104,8 +119,10 @@ __all__ = [
     "Transaction",
     "UnbalancedBalanceSheet",
     "UnbalancedTransaction",
+    "allocate_pro_rata",
     "apply_carryforward",
     "cagr",
+    "default_securities",
     "irr_periodic",
     "load_deal",
     "moic",
