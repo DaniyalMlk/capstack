@@ -188,7 +188,7 @@ class TestDefaultSecurities:
         assert [s.name for s in securities] == ["Sponsor equity", "Rollover equity"]
         total = t.sponsor_equity + money(100)
         assert securities[1].ownership == money(100) / total
-        assert is_close(sum(s.ownership for s in securities), ONE, tolerance="1E-20")
+        assert is_close(sum((s.ownership for s in securities), ZERO), ONE, tolerance="1E-20")
 
     def test_a_deal_with_no_equity_is_refused(self) -> None:
         # Debt raised exactly covers the deal, so the sponsor writes no cheque.
@@ -501,7 +501,7 @@ class TestAttribution:
             attribution.debt_paydown,
             attribution.costs,
         ]
-        total = sum(abs(attribution.share(c)) for c in components)
+        total = sum((abs(attribution.share(c)) for c in components), ZERO)
         assert is_close(total, ONE, tolerance="1E-15")
 
     def test_a_wipeout_separates_the_bridge_from_the_distribution(self) -> None:
