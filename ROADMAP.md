@@ -44,9 +44,9 @@ would actually read.
 
 ## Phase 6 — Returns
 
-- [ ] Exit valuation and the equity bridge at exit
-- [ ] IRR and MoIC per security, including preferred returns
-- [ ] Value-creation attribution: EBITDA growth, multiple change, debt paydown
+- [x] Exit valuation and the equity bridge at exit
+- [x] IRR and MoIC per security, including preferred returns
+- [x] Value-creation attribution: EBITDA growth, multiple change, debt paydown
 
 ## Phase 7 — Analysis and reporting
 

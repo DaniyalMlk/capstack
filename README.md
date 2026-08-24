@@ -7,14 +7,16 @@ for, how the purchase is funded, what the operating case throws off, how the deb
 gets paid down, whether the covenants hold, and what the sponsor makes on the way
 out.
 
-Status: five layers are in — the numerics (exact money, day counts, period
-grids, the return measures), the transaction (entry valuation, a sources and
-uses table that balances, and the opening balance sheet after the
-recapitalisation), the operating case (drivers through to unlevered free cash
-flow), the capital structure (interest, amortisation, a cash sweep by seniority
-and a revolver that runs both ways), and the covenants (maintenance tests,
-headroom measured in EBITDA, and a sweep that steps with a leverage grid).
-Returns and the exit are next; see [ROADMAP.md](ROADMAP.md).
+Status: six layers are in — the numerics (exact money, day counts, period grids,
+the return measures), the transaction (entry valuation, a sources and uses table
+that balances, and the opening balance sheet after the recapitalisation), the
+operating case (drivers through to unlevered free cash flow), the capital
+structure (interest, amortisation, a cash sweep by seniority and a revolver that
+runs both ways), the covenants (maintenance tests, headroom measured in EBITDA,
+and a sweep that steps with a leverage grid), and the exit (equity value,
+returns by security through a preferred waterfall, and a value-creation bridge).
+Sensitivity grids and the investment committee report are next; see
+[ROADMAP.md](ROADMAP.md).
 
 ## Install
 
@@ -240,6 +242,53 @@ reading. All four tests pass comfortably in turns, but the fixed-charge test in
 period two survives a fall in EBITDA of only 1.7%, which is a materially
 different deal from the one the leverage rows describe.
 
+And finally what the whole thing was for:
+
+```console
+$ capstack exit examples/meridian.json
+Project Meridian - exit
+=======================
+
+  Exit at 2031-06-30
+    Exit EBITDA                       372.09
+    Enterprise value                4,092.98
+    Debt outstanding                1,786.60
+    Cash                               97.08
+    Cost of sale                       30.70
+    Equity value                    2,372.77
+    Exit multiple                     11.00x
+    Exit leverage                      4.54x
+
+  Equity
+                              invested     proceeds         MoIC          IRR
+    Sponsor preferred           845.02     1,241.87        1.47x         8.0%
+    Sponsor common              149.12       927.34        6.22x        44.1%
+    Management rollover          85.00       203.56        2.39x        19.1%
+    -------------------------------------------------------------------------
+    Total                     1,079.14     2,372.77        2.20x        17.1%
+    over 5.00 years
+
+  Where the value came from
+    EBITDA growth                   1,519.02
+    Multiple change                  -186.04
+    Debt paydown                      100.49
+    Entry and exit costs             -139.84
+                              --------------
+    Value created                   1,293.63
+```
+
+The equity rows are the point. Bought and sold at a lower multiple than it was
+bought at, the deal still returns 2.20x — and the sponsor's preferred earns 8.0%
+while the common behind it earns 44.1%, on exactly the same exit. That gap is
+the structure doing what the structure is for, and a model that reported one
+blended figure for the equity would hide it.
+
+The bridge underneath ties to the change in equity value exactly. It is worth
+reading in the order it prints: the business is worth 1,519 more because it
+earns more, 186 less because the multiple came in, and 100 more because the
+schedule repaid debt out of cash flow — a reminder that in a five-year hold at
+this leverage, deleveraging is a rounding error next to growth.
+
 ## Test
 
 ```bash
@@ -366,6 +415,35 @@ counted.
 **A structure carrying both a grid and a flat sweep rate is refused.** It has
 two answers to the same question, and silently preferring one of them hides a
 contradiction in the description of the deal rather than resolving it.
+
+**Growth is valued at the entry multiple and the multiple at exit EBITDA.** The
+cross term between the two — the extra turns earned on the extra EBITDA — has to
+be assigned somewhere, and the choice changes the story. Putting it in the
+multiple line is the conservative reading: the alternative flatters the growth
+line in precisely those deals where the multiple expanded, which are the deals
+where a sponsor least wants to be asked how much of the return was theirs.
+
+**The attribution is computed, not plugged.** The costs line could be defined as
+whatever the other three do not explain, and the bridge would then tie by
+construction and mean nothing. It is instead computed from the deal — the fees
+and issue discount the equity funded at close, plus the cost of selling — so the
+four components summing to the change in equity value is a check that can fail.
+It is asserted in the test suite at three different exit multiples.
+
+**The bridge is drawn before limited liability, the distribution after it.**
+Equity in a leveraged company is an option: shareholders in a business worth
+less than its debt hand the keys to the lenders rather than receiving a bill.
+So the equity value is floored at zero when it is distributed. It is *not*
+floored in the attribution, because the floor is a legal fact rather than a
+source of value, and folding it into the costs line would misattribute a loss
+the lenders absorbed to fees the sponsor paid. The two are reported side by
+side, with the difference named.
+
+**A security that was wiped out has no rate of return.** There is no rate at
+which nothing back is a return, and the solver's search range does not reach
+-100% because the discount factor is singular there. Rather than report the
+floor of the range as though it were an answer, the row carries no rate and the
+reason travels with it.
 
 **Falling below the minimum cash balance is not the same as running out.** A
 business that ends a period on less cash than its own policy requires has a
