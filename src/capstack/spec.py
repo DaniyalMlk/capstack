@@ -35,10 +35,14 @@ from .debt import (
 from .drivers import Driver
 from .money import Money, money
 from .operating import DEFAULT_NOL_USAGE_LIMIT, OperatingAssumptions, OperatingModel
+from .outcome import Outcome, Security, SecurityKind
 from .periods import Frequency, PeriodGrid
 from .transaction import DebtFunding, EntryValuation, LineItem, Transaction
 
 __all__ = ["Deal", "DealSpecError", "load_deal", "parse_deal"]
+
+#: The default exit fee rate, named so the dataclass field below can carry it.
+ZERO_RATE = money(0)
 
 _FREQUENCIES = {
     "annual": Frequency.ANNUAL,
@@ -69,6 +73,9 @@ class Deal:
     structure: CapitalStructure | None = None
     opening_cash: Money | None = None
     covenants: tuple[Covenant, ...] = ()
+    exit_multiple: Money | None = None
+    exit_fee_rate: Money = ZERO_RATE
+    securities: tuple[Security, ...] = ()
 
     @property
     def has_projection(self) -> bool:
@@ -148,6 +155,30 @@ class Deal:
                 "the maintenance tests"
             )
         return CovenantReport.test(self.covenants, self.schedule(), self.project())
+
+    def realise(self) -> Outcome:
+        """Value the exit and run the equity through it.
+
+        Needs a close date as well as a schedule, because a rate of return is
+        measured over elapsed time and the model has to know when the clock
+        started.
+        """
+        if self.close_date is None:
+            raise DealSpecError(
+                "an exit is measured from close, so a close date is required"
+            )
+        try:
+            return Outcome.realise(
+                self.transaction,
+                self.project(),
+                self.schedule(),
+                entry_date=self.close_date,
+                exit_multiple=self.exit_multiple,
+                exit_fee_rate=self.exit_fee_rate,
+                securities=self.securities or None,
+            )
+        except ValueError as exc:
+            raise DealSpecError(f"exit: {exc}") from exc
 
     def project(self) -> OperatingModel:
         """Run the operating case.
@@ -348,6 +379,113 @@ def _parse_target(data: Any) -> tuple[TargetBookBalanceSheet, PurchaseAccounting
 _DAY_COUNTS = {c.value.lower(): c for c in DayCount}
 _INTEREST_BASES = {b.value: b for b in InterestBasis}
 _MEASURES = {m.value: m for m in Measure}
+_SECURITY_KINDS = {k.value: k for k in SecurityKind}
+
+
+def _parse_security(
+    data: Any, index: int, transaction: Transaction
+) -> tuple[Security, str | None, Money]:
+    """Read one equity instrument, and what share of a cheque funds it.
+
+    Capital can be stated outright or, more usefully, as a share of a cheque the
+    funding table already derived. The sponsor's contribution is a plug — it is
+    whatever balances the deal — so a file that restates it as a number will
+    disagree with the funding table the first time any other assumption moves.
+    """
+    where = f"exit.equity[{index}]"
+    if not isinstance(data, dict):
+        raise DealSpecError(f"{where}: expected an object")
+
+    kind_name = str(data.get("kind", SecurityKind.COMMON.value)).lower()
+    if kind_name not in _SECURITY_KINDS:
+        raise DealSpecError(
+            f"{where}.kind: unknown kind {data.get('kind')!r}; expected one of "
+            f"{', '.join(sorted(_SECURITY_KINDS))}"
+        )
+
+    source = data.get("of")
+    if source is None and data.get("invested") is None:
+        raise DealSpecError(
+            f"{where}: say what funds this security — either 'invested' as an "
+            f"amount, or 'of' naming a cheque from the funding table"
+        )
+    if source is not None and data.get("invested") is not None:
+        raise DealSpecError(
+            f"{where}: 'invested' and 'of' are two answers to the same question"
+        )
+
+    share = _optional_amount(data, "share", where, default="1")
+    if source is None:
+        invested = _amount(data["invested"], f"{where}.invested")
+    else:
+        name = str(source).lower()
+        cheques = {
+            "sponsor": max(transaction.sponsor_equity, money(0)),
+            "rollover": transaction.rollover_equity,
+        }
+        if name not in cheques:
+            raise DealSpecError(
+                f"{where}.of: unknown source {source!r}; expected sponsor or rollover"
+            )
+        if not (0 <= share <= 1):
+            raise DealSpecError(f"{where}.share: a share, so between 0 and 1")
+        invested = cheques[name] * share
+        source = name
+
+    compounding = _flag(data, "compounding", where)
+    try:
+        security = Security.of(
+            str(_require(data, "name", where)),
+            _SECURITY_KINDS[kind_name],
+            invested,
+            ownership=_optional_amount(data, "ownership", where),
+            preferred_rate=_optional_amount(data, "preferred_rate", where),
+            compounding=True if compounding is None else compounding,
+            seniority=_whole(data, "seniority", where) or 0,
+        )
+    except ValueError as exc:
+        raise DealSpecError(f"{where}: {exc}") from exc
+    return security, (str(source) if source is not None else None), share
+
+
+def _parse_exit(
+    data: Any, transaction: Transaction
+) -> tuple[Money | None, Money, tuple[Security, ...]]:
+    """Read the exit assumptions and the equity that shares in them."""
+    where = "exit"
+    if not isinstance(data, dict):
+        raise DealSpecError(f"{where}: expected an object")
+
+    multiple = (
+        _amount(data["multiple"], f"{where}.multiple")
+        if data.get("multiple") is not None
+        else None
+    )
+    fee_rate = _optional_amount(data, "fee_rate", where)
+
+    equity_raw = data.get("equity")
+    if equity_raw is None:
+        return multiple, fee_rate, ()
+    if not isinstance(equity_raw, list) or not equity_raw:
+        raise DealSpecError(f"{where}.equity: expected a list of securities")
+
+    parsed = [
+        _parse_security(item, i, transaction) for i, item in enumerate(equity_raw)
+    ]
+    # Every cheque referenced has to be fully allocated. Capital left over is
+    # capital that shares in nothing, which is never what was meant and would
+    # quietly overstate every multiple in the report.
+    claimed: dict[str, Money] = {}
+    for _, source, share in parsed:
+        if source is not None:
+            claimed[source] = claimed.get(source, money(0)) + share
+    for source, total in claimed.items():
+        if total != 1:
+            raise DealSpecError(
+                f"{where}.equity: the {source} cheque is {total} allocated; the "
+                f"shares of a cheque must come to exactly 1"
+            )
+    return multiple, fee_rate, tuple(security for security, _, _ in parsed)
 
 
 def _parse_sweep_grid(data: Any, where: str) -> SweepGrid:
@@ -637,6 +775,19 @@ def parse_deal(data: dict[str, Any]) -> Deal:
             _parse_covenant(item, i, len(grid)) for i, item in enumerate(covenants_raw)
         )
 
+    exit_multiple: Money | None = None
+    exit_fee_rate: Money = ZERO_RATE
+    securities: tuple[Security, ...] = ()
+    if data.get("exit") is not None:
+        if structure is None or grid is None:
+            raise DealSpecError(
+                "exit: there is nothing to exit from; describe the capital "
+                "structure and the projection first"
+            )
+        exit_multiple, exit_fee_rate, securities = _parse_exit(
+            data["exit"], transaction
+        )
+
     return Deal(
         name=name,
         close_date=close,
@@ -650,6 +801,9 @@ def parse_deal(data: dict[str, Any]) -> Deal:
         structure=structure,
         opening_cash=opening_cash,
         covenants=covenants,
+        exit_multiple=exit_multiple,
+        exit_fee_rate=exit_fee_rate,
+        securities=securities,
     )
 
 

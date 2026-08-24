@@ -745,6 +745,160 @@ def _cmd_covenants(args: argparse.Namespace) -> int:
     return 0
 
 
+def _exit_report(deal: Deal) -> dict[str, Any]:
+    outcome = deal.realise()
+    v = outcome.valuation
+    a = outcome.attribution
+    return {
+        "name": deal.name,
+        "close_date": deal.close_date.isoformat() if deal.close_date else None,
+        "exit": {
+            "date": v.when.isoformat(),
+            "ebitda": _amount_str(v.ebitda),
+            "multiple": float(v.multiple),
+            "enterprise_value": _amount_str(v.enterprise_value),
+            "debt": _amount_str(v.debt),
+            "cash": _amount_str(v.cash),
+            "net_debt": _amount_str(v.net_debt),
+            "fees": _amount_str(v.fees),
+            "equity_value": _amount_str(v.equity_value),
+            "exit_leverage": float(v.exit_leverage),
+            "wiped_out": v.is_wiped_out,
+        },
+        "securities": [
+            {
+                "name": row.name,
+                "kind": str(row.security.kind),
+                "invested": _amount_str(row.invested),
+                "accrued": _amount_str(row.accrued),
+                "preferred_paid": _amount_str(row.preferred_paid),
+                "residual_paid": _amount_str(row.residual_paid),
+                "proceeds": _amount_str(row.proceeds),
+                "shortfall": _amount_str(row.shortfall),
+                "ownership": float(row.security.ownership),
+                "moic": None if row.moic is None else float(row.moic),
+                "irr": row.irr,
+                "irr_note": row.irr_note,
+            }
+            for row in outcome
+        ],
+        "totals": {
+            "invested": _amount_str(outcome.invested),
+            "proceeds": _amount_str(outcome.proceeds),
+            "profit": _amount_str(outcome.profit),
+            "moic": None if outcome.moic is None else float(outcome.moic),
+            "irr": outcome.irr,
+            "holding_period_years": float(outcome.holding_period_years),
+        },
+        "attribution": {
+            "ebitda_growth": _amount_str(a.ebitda_growth),
+            "multiple_change": _amount_str(a.multiple_change),
+            "debt_paydown": _amount_str(a.debt_paydown),
+            "costs": _amount_str(a.costs),
+            "total": _amount_str(a.total),
+            "value_created": _amount_str(a.value_created),
+            "floored": _amount_str(a.floored),
+            "reconciles": a.reconciles(),
+        },
+    }
+
+
+#: The bridge, in the order it is read: what the business earned, what the
+#: market paid for it, what the lenders were given back, what it cost.
+_ATTRIBUTION_ROWS: tuple[tuple[str, str], ...] = (
+    ("EBITDA growth", "ebitda_growth"),
+    ("Multiple change", "multiple_change"),
+    ("Debt paydown", "debt_paydown"),
+    ("Entry and exit costs", "costs"),
+)
+
+
+def _print_exit(report: dict[str, Any]) -> None:
+    header = f"{report['name']} - exit"
+    print(header)
+    print("=" * len(header))
+    print()
+
+    exit_ = report["exit"]
+    print(f"  Exit at {exit_['date']}")
+    for label, key in (
+        ("Exit EBITDA", "ebitda"),
+        ("Enterprise value", "enterprise_value"),
+        ("Debt outstanding", "debt"),
+        ("Cash", "cash"),
+        ("Cost of sale", "fees"),
+        ("Equity value", "equity_value"),
+    ):
+        print(f"    {label:<26}{_format_money(Decimal(exit_[key])):>14}")
+    print(f"    {'Exit multiple':<26}{exit_['multiple']:>13.2f}x")
+    print(f"    {'Exit leverage':<26}{exit_['exit_leverage']:>13.2f}x")
+    if exit_["wiped_out"]:
+        print()
+        print("    The business is worth less than it owes, so the equity is wiped")
+        print("    out and the lenders take what there is.")
+    print()
+
+    rows = report["securities"]
+    label_width = max(max(len(r["name"]) for r in rows), len("Total")) + 2
+    print("  Equity")
+    print(
+        "    "
+        + "".ljust(label_width)
+        + "".join(h.rjust(13) for h in ("invested", "proceeds", "MoIC", "IRR"))
+    )
+    for row in rows:
+        print(
+            "    "
+            + row["name"].ljust(label_width)
+            + _format_money(Decimal(row["invested"])).rjust(13)
+            + _format_money(Decimal(row["proceeds"])).rjust(13)
+            + (_NO_RATIO if row["moic"] is None else f"{row['moic']:.2f}x").rjust(13)
+            + (_NO_RATIO if row["irr"] is None else f"{row['irr']:.1%}").rjust(13)
+        )
+        if Decimal(row["shortfall"]) > 0:
+            print(
+                f"      unpaid preferred claim of "
+                f"{_format_money(Decimal(row['shortfall']))}"
+            )
+    totals = report["totals"]
+    print("    " + "-" * (label_width + 52))
+    print(
+        "    "
+        + "Total".ljust(label_width)
+        + _format_money(Decimal(totals["invested"])).rjust(13)
+        + _format_money(Decimal(totals["proceeds"])).rjust(13)
+        + (_NO_RATIO if totals["moic"] is None else f"{totals['moic']:.2f}x").rjust(13)
+        + (_NO_RATIO if totals["irr"] is None else f"{totals['irr']:.1%}").rjust(13)
+    )
+    print(f"    over {totals['holding_period_years']:.2f} years")
+    print()
+
+    attribution = report["attribution"]
+    print("  Where the value came from")
+    for label, key in _ATTRIBUTION_ROWS:
+        print(f"    {label:<26}{_format_money(Decimal(attribution[key])):>14}")
+    print(f"    {'':<26}{'-' * 14}")
+    print(f"    {'Value created':<26}{_format_money(Decimal(attribution['total'])):>14}")
+    if Decimal(attribution["floored"]) > 0:
+        print()
+        print(
+            f"    Of that loss, "
+            f"{_format_money(Decimal(attribution['floored']))} falls on the lenders "
+            f"rather than"
+        )
+        print("    the shareholders, who owe nothing beyond their capital.")
+
+
+def _cmd_exit(args: argparse.Namespace) -> int:
+    deal = load_deal(args.file)
+    report = _exit_report(deal)
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        _print_exit(report)
+    return 0
+
+
 def _cmd_project(args: argparse.Namespace) -> int:
     deal = load_deal(args.file)
     report = _projection_report(deal)
@@ -856,6 +1010,18 @@ def build_parser() -> argparse.ArgumentParser:
     covenants.add_argument("file", help="path to a deal file (JSON)")
     covenants.add_argument("--json", action="store_true", help="emit JSON instead of a table")
     covenants.set_defaults(handler=_cmd_covenants)
+
+    exit_ = sub.add_parser(
+        "exit",
+        help="the exit: equity value, returns by security, and the value bridge",
+        description=(
+            "Value the exit, run the equity waterfall through it, and decompose "
+            "the return into earnings growth, multiple change and debt paydown."
+        ),
+    )
+    exit_.add_argument("file", help="path to a deal file (JSON)")
+    exit_.add_argument("--json", action="store_true", help="emit JSON instead of a table")
+    exit_.set_defaults(handler=_cmd_exit)
 
     return parser
 
