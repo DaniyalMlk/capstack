@@ -207,7 +207,7 @@ class TestTheScheduleUnderAGrid:
     def test_a_grid_sweeps_less_than_a_full_sweep_and_more_than_none(self) -> None:
         made = [
             DebtSchedule.run(
-                stack(term_loan(1000, "0.05"), **kwargs),  # type: ignore[arg-type]
+                stack(term_loan(1000, "0.05"), **kwargs),
                 periods(4),
                 [200, 220, 240, 260],
                 ebitda=[300, 320, 340, 360],
