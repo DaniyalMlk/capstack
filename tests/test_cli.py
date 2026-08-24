@@ -354,7 +354,7 @@ class TestScheduleCommand:
         main(["schedule", example])
         out = capsys.readouterr().out
         assert "7.71x" in out  # entry
-        assert "4.64x" in out  # exit
+        assert "4.80x" in out  # exit, under a sweep that steps down as leverage falls
 
     def test_json_output(self, example: str, capsys: pytest.CaptureFixture[str]) -> None:
         code = main(["schedule", example, "--json"])
