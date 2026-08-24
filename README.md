@@ -7,13 +7,14 @@ for, how the purchase is funded, what the operating case throws off, how the deb
 gets paid down, whether the covenants hold, and what the sponsor makes on the way
 out.
 
-Status: four layers are in — the numerics (exact money, day counts, period
+Status: five layers are in — the numerics (exact money, day counts, period
 grids, the return measures), the transaction (entry valuation, a sources and
 uses table that balances, and the opening balance sheet after the
 recapitalisation), the operating case (drivers through to unlevered free cash
-flow), and the capital structure (interest, amortisation, a cash sweep by
-seniority and a revolver that runs both ways). Covenants are next; see
-[ROADMAP.md](ROADMAP.md).
+flow), the capital structure (interest, amortisation, a cash sweep by seniority
+and a revolver that runs both ways), and the covenants (maintenance tests,
+headroom measured in EBITDA, and a sweep that steps with a leverage grid).
+Returns and the exit are next; see [ROADMAP.md](ROADMAP.md).
 
 ## Install
 
@@ -158,25 +159,25 @@ Project Meridian - debt schedule
                                  2027-06    2028-06    2029-06    2030-06    2031-06
   ----------------------------------------------------------------------------------
   Unlevered free cash flow        119.59     142.71     166.65     190.72     214.17
-  Cash interest                  -141.32    -138.62    -134.06    -127.95    -120.00
-  Commitment fees                  -0.73      -0.67      -0.70      -0.76      -0.76
-  Levered free cash flow          -22.45       3.42      31.89      62.01      93.42
+  Cash interest                  -141.32    -138.62    -134.23    -128.78    -122.71
+  Commitment fees                  -0.73      -0.67      -0.69      -0.74      -0.76
+  Levered free cash flow          -22.45       3.42      31.73      61.20      90.71
 
   Mandatory repayment             -11.50     -11.50     -11.50     -11.50     -11.50
-  Cash sweep                        0.00       0.00     -20.39     -50.51     -81.92
+  Cash sweep                        0.00       0.00     -15.17     -37.27     -39.60
   Revolver draw                    13.95       8.08       0.00       0.00       0.00
-  Closing cash                     40.00      40.00      40.00      40.00      40.00
+  Closing cash                     40.00      40.00      45.06      57.48      97.08
 
   Accrued to balances              11.67      12.25      12.79      13.39      14.01
-  Closing debt                  1,864.12   1,872.95   1,853.85   1,805.23   1,725.82
+  Closing debt                  1,864.12   1,872.95   1,859.07   1,823.69   1,786.60
 
   Closing balances
-  Revolving credit facility        13.95      22.03       1.64       0.00       0.00
-  Term Loan B                   1,138.50   1,127.00   1,115.50   1,055.13     961.71
+  Revolving credit facility        13.95      22.03       6.86       0.00       0.00
+  Term Loan B                   1,138.50   1,127.00   1,115.50   1,073.59   1,022.48
   Senior secured notes            450.00     450.00     450.00     450.00     450.00
   Second lien                     261.67     273.92     286.71     300.10     314.11
 
-  Leverage                         7.12x      6.43x      5.79x      5.19x      4.64x
+  Leverage                         7.12x      6.43x      5.80x      5.25x      4.80x
   Base rate                        4.25%      3.94%      3.62%      3.31%      3.00%
 ```
 
@@ -184,10 +185,60 @@ The first two years are the interesting part: levered free cash flow is
 negative, the revolver funds the gap, the second lien accrues rather than pays,
 and total debt goes *up* before the operating case grows into the structure.
 
+The sweep in this deal steps: three quarters of excess cash flow above 5.50x,
+half above 4.50x, a quarter above 3.50x and nothing below. That is why the cash
+balance climbs in the last two periods instead of every spare pound going
+straight into the term loan.
+
 See [`examples/meridian.json`](examples/meridian.json) for the input. Assumption
 series are written the way an operating case is actually described — a bare
 number for something flat, `{"ramp": [0.085, 0.035]}` for growth that tapers, or
 a list when the years genuinely differ.
+
+Whether the structure is *allowed* to keep running is a separate question:
+
+```console
+$ capstack covenants examples/meridian.json
+Project Meridian - covenants
+============================
+
+                                      P1         P2         P3         P4         P5
+                                 2027-06    2028-06    2029-06    2030-06    2031-06
+  ----------------------------------------------------------------------------------
+  Total net leverage                 n/a      6.29x      5.66x      5.08x      4.54x
+    covenant                         n/a      7.50x      6.75x      6.00x      5.50x
+    cushion                          n/a      16.2%      16.1%      15.3%      17.4%
+    status                             -         ok         ok         ok         ok
+
+  First lien net leverage            n/a      3.80x      3.36x      2.92x      2.49x
+    covenant                         n/a      5.25x      4.75x      4.25x      4.00x
+    cushion                          n/a      27.5%      29.2%      31.2%      37.8%
+    status                             -         ok         ok         ok         ok
+
+  Interest coverage                  n/a      2.09x      2.37x      2.68x      3.01x
+    covenant                         n/a      1.73x      1.85x      1.98x      2.10x
+    cushion                          n/a      17.6%      22.1%      26.4%      30.3%
+    status                             -         ok         ok         ok         ok
+
+  Fixed charge coverage              n/a      1.03x      1.22x      1.42x      1.64x
+    covenant                         n/a      1.00x      1.00x      1.00x      1.00x
+    cushion                          n/a       1.7%       9.9%      17.1%      23.3%
+    status                             -         ok         ok         ok         ok
+
+  Tightest test
+    Fixed charge coverage in period 2
+    EBITDA projected                  291.49
+    Breaches below                    286.53
+    Cushion                            1.7%
+
+  No maintenance test is breached across the hold.
+```
+
+Each test shows the ratio, the covenant in force that period, and the cushion —
+how far EBITDA could fall before the test trips. The cushion is the number worth
+reading. All four tests pass comfortably in turns, but the fixed-charge test in
+period two survives a fall in EBITDA of only 1.7%, which is a materially
+different deal from the one the leverage rows describe.
 
 ## Test
 
@@ -279,6 +330,42 @@ date. Sweeping the balance instead takes back half the retained cash next
 period, then half of that, until a negotiated 50% sweep has quietly become a
 100% one — which makes the sweep percentage, the most argued-over number in the
 credit agreement, do nothing at all.
+
+**Headroom is measured in EBITDA, not in turns.** The distance from 5.20x to a
+6.00x covenant is 0.80x. That is arithmetic, and it is not comparable across
+tests: 0.80x of leverage headroom and 0.80x of interest-cover headroom describe
+completely different amounts of trouble. Every observation therefore carries the
+EBITDA at which the test would trip and the shortfall as a percentage of the
+EBITDA projected. In the worked example the leverage tests look loose and the
+fixed-charge test survives a 1.7% miss, which is the fact worth knowing and the
+one the turns hide.
+
+The debt and the charges are held at their projected levels while EBITDA is
+flexed, which is why this is called a cushion and not a forecast. A business
+actually earning less would sweep less and carry more debt into the following
+year, so the true cushion is a little thinner than the reported one, never
+thicker.
+
+**An undefined ratio is not a pass and is not a blank.** A period with no
+earnings has no leverage ratio. Whether that is a breach depends on what is
+behind it: a business with no debt cannot be over-levered, and a business with
+debt and no earnings is exactly the case the covenant exists to catch. Both
+report no ratio; one passes and one breaches, and the report says which and why
+rather than leaving a reader to infer it from an empty cell.
+
+**The sweep grid is certified in arrears.** Real agreements sweep 50% of excess
+cash flow, stepping down as leverage falls. Reading the step off the leverage of
+the period being swept would make the rate depend on the closing balance, which
+depends on the sweep — a second circularity, and a step function dropped into
+the middle of the interest fixed point, where it can oscillate between two rungs
+indefinitely. The step is resolved against the leverage at the most recent test
+date instead. That is not a modelling convenience: an excess cash flow payment
+is made in arrears, at a rate set by a certificate signed before the cash was
+counted.
+
+**A structure carrying both a grid and a flat sweep rate is refused.** It has
+two answers to the same question, and silently preferring one of them hides a
+contradiction in the description of the deal rather than resolving it.
 
 **Falling below the minimum cash balance is not the same as running out.** A
 business that ends a period on less cash than its own policy requires has a
