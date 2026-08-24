@@ -22,11 +22,13 @@ from typing import Any
 from dataclasses import dataclass
 
 from .balance_sheet import OpeningBalanceSheet, PurchaseAccounting, TargetBookBalanceSheet
+from .covenants import Covenant, CovenantReport, Measure
 from .daycount import DayCount
 from .debt import (
     CapitalStructure,
     DebtSchedule,
     InterestBasis,
+    SweepGrid,
     Tranche,
     TrancheKind,
 )
@@ -66,6 +68,7 @@ class Deal:
     accounting: PurchaseAccounting | None = None
     structure: CapitalStructure | None = None
     opening_cash: Money | None = None
+    covenants: tuple[Covenant, ...] = ()
 
     @property
     def has_projection(self) -> bool:
@@ -124,7 +127,27 @@ class Deal:
             self.structure,
             self.project(),
             opening_cash=self.opening_cash if self.opening_cash is not None else self.cash_at_close,
+            # The certificate that sets the first period's sweep step was signed
+            # on the LTM figure the deal was priced on, not on a projection.
+            opening_ebitda=self.transaction.valuation.ltm_ebitda,
         )
+
+    @property
+    def has_covenants(self) -> bool:
+        return bool(self.covenants)
+
+    def test_covenants(self) -> CovenantReport:
+        """Run the described covenants against the schedule and the case.
+
+        Raises if the file described none rather than reporting a structure with
+        no tests as a structure that passes all of them.
+        """
+        if not self.covenants:
+            raise DealSpecError(
+                'this deal has no covenants; add a "covenants" block describing '
+                "the maintenance tests"
+            )
+        return CovenantReport.test(self.covenants, self.schedule(), self.project())
 
     def project(self) -> OperatingModel:
         """Run the operating case.
@@ -324,6 +347,74 @@ def _parse_target(data: Any) -> tuple[TargetBookBalanceSheet, PurchaseAccounting
 
 _DAY_COUNTS = {c.value.lower(): c for c in DayCount}
 _INTEREST_BASES = {b.value: b for b in InterestBasis}
+_MEASURES = {m.value: m for m in Measure}
+
+
+def _parse_sweep_grid(data: Any, where: str) -> SweepGrid:
+    """Read a sweep grid: the rungs, the rate below them, and what is measured.
+
+    Written as pairs rather than as objects because that is how a term sheet
+    puts it — "50% stepping to 25% at 4.50x" is two numbers and a level, and
+    surrounding each pair with field names makes the grid harder to read, not
+    easier.
+    """
+    if not isinstance(data, dict):
+        raise DealSpecError(f"{where}: expected an object")
+    steps_raw = _require(data, "steps", where)
+    if not isinstance(steps_raw, list) or not steps_raw:
+        raise DealSpecError(f"{where}.steps: expected a list of [leverage, rate] pairs")
+
+    steps: list[tuple[Money, Money]] = []
+    for i, item in enumerate(steps_raw):
+        if not isinstance(item, list) or len(item) != 2:
+            raise DealSpecError(
+                f"{where}.steps[{i}]: expected a pair of [leverage, rate]"
+            )
+        steps.append(
+            (
+                _amount(item[0], f"{where}.steps[{i}][0]"),
+                _amount(item[1], f"{where}.steps[{i}][1]"),
+            )
+        )
+
+    net = _flag(data, "net", where)
+    try:
+        return SweepGrid.of(
+            steps,
+            floor=_optional_amount(data, "floor", where),
+            net=True if net is None else net,
+        )
+    except ValueError as exc:
+        raise DealSpecError(f"{where}: {exc}") from exc
+
+
+def _parse_covenant(data: Any, index: int, periods: int) -> Covenant:
+    """Read one maintenance test."""
+    where = f"covenants[{index}]"
+    if not isinstance(data, dict):
+        raise DealSpecError(f"{where}: expected an object")
+
+    measure_name = str(_require(data, "measure", where)).lower()
+    if measure_name not in _MEASURES:
+        raise DealSpecError(
+            f"{where}.measure: unknown measure {data.get('measure')!r}; expected "
+            f"one of {', '.join(sorted(_MEASURES))}"
+        )
+
+    tranches_raw = data.get("tranches", [])
+    if not isinstance(tranches_raw, list):
+        raise DealSpecError(f"{where}.tranches: expected a list of tranche names")
+
+    try:
+        return Covenant.of(
+            str(_require(data, "name", where)),
+            _MEASURES[measure_name],
+            _driver(_require(data, "threshold", where), periods, f"{where}.threshold"),
+            first_test_period=_whole(data, "first_test_period", where) or 1,
+            tranches=[str(t) for t in tranches_raw],
+        )
+    except ValueError as exc:
+        raise DealSpecError(f"{where}: {exc}") from exc
 
 
 def _parse_structure(
@@ -358,12 +449,18 @@ def _parse_structure(
         if data.get("opening_cash") is not None
         else None
     )
+    sweep_grid = (
+        _parse_sweep_grid(data["sweep_grid"], f"{where}.sweep_grid")
+        if data.get("sweep_grid") is not None
+        else None
+    )
 
     try:
         structure = CapitalStructure.of(
             tranches,
             minimum_cash=_optional_amount(data, "minimum_cash", where),
             sweep_rate=_optional_amount(data, "sweep_rate", where, default="1"),
+            sweep_grid=sweep_grid,
             base_rate=base_rate,
             day_count=_DAY_COUNTS[day_count_name],
             interest_basis=_INTEREST_BASES[basis_name],
@@ -521,6 +618,25 @@ def parse_deal(data: dict[str, Any]) -> Deal:
         tranches = tuple(_schedule_tranche(item, i, span) for i, item in enumerate(debt_raw))
         structure, opening_cash = _parse_structure(data["structure"], tranches, span)
 
+    covenants: tuple[Covenant, ...] = ()
+    covenants_raw = data.get("covenants")
+    if covenants_raw is not None:
+        if not isinstance(covenants_raw, list):
+            raise DealSpecError("covenants: expected a list of tests")
+        if structure is None:
+            raise DealSpecError(
+                "covenants: there is nothing to test; describe the tranches under "
+                "'debt' and the rules under 'structure'"
+            )
+        if grid is None:
+            raise DealSpecError(
+                "covenants: a maintenance test is measured against an operating "
+                "case, so a projection is required"
+            )
+        covenants = tuple(
+            _parse_covenant(item, i, len(grid)) for i, item in enumerate(covenants_raw)
+        )
+
     return Deal(
         name=name,
         close_date=close,
@@ -533,6 +649,7 @@ def parse_deal(data: dict[str, Any]) -> Deal:
         accounting=accounting,
         structure=structure,
         opening_cash=opening_cash,
+        covenants=covenants,
     )
 
 

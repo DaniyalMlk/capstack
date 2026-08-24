@@ -14,6 +14,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any, Sequence
 
+from .covenants import CovenantObservation
 from .daycount import DayCount
 from .money import quantize
 from .returns import AmbiguousIRR, CashFlow, CashFlowStream, IRRError
@@ -583,6 +584,167 @@ def _cmd_schedule(args: argparse.Namespace) -> int:
     return 0
 
 
+def _covenant_report(deal: Deal) -> dict[str, Any]:
+    report = deal.test_covenants()
+    return {
+        "name": deal.name,
+        "covenants": [
+            {"name": c.name, "measure": str(c.measure), "first_test_period": c.first_test_period}
+            for c in report.covenants
+        ],
+        "observations": [_observation(o) for o in report],
+        "passes": report.passes,
+        "breaches": [_observation(o) for o in report.breaches],
+        "first_breach": (
+            _observation(report.first_breach) if report.first_breach is not None else None
+        ),
+        "tightest": (
+            _observation(report.tightest) if report.tightest is not None else None
+        ),
+    }
+
+
+def _observation(o: CovenantObservation) -> dict[str, Any]:
+    """One tested covenant, flattened.
+
+    Ratios are emitted as floats and amounts as strings, which is the split used
+    everywhere else in this layer: a multiple is a measurement and a balance is
+    a quantity of money that has to survive a round trip.
+    """
+    return {
+        "covenant": o.covenant,
+        "measure": str(o.measure),
+        "period": o.index,
+        "ending": o.period.end.isoformat(),
+        "tested": o.tested,
+        "threshold": float(o.threshold),
+        "actual": None if o.actual is None else float(o.actual),
+        "passes": o.passes,
+        "breached": o.breached,
+        "headroom": None if o.headroom is None else float(o.headroom),
+        "ebitda": _amount_str(o.ebitda),
+        "ebitda_at_breach": (
+            None if o.ebitda_at_breach is None else _amount_str(o.ebitda_at_breach)
+        ),
+        "ebitda_cushion": (
+            None if o.ebitda_cushion is None else float(o.ebitda_cushion)
+        ),
+        "note": o.note,
+    }
+
+
+#: What a cell shows when the ratio has no value. Distinct from a blank, which
+#: would read as a number the report forgot to print.
+_NO_RATIO = "n/a"
+
+
+def _ratio(value: float | None, suffix: str = "x") -> str:
+    return _NO_RATIO if value is None else f"{value:.2f}{suffix}"
+
+
+def _print_covenants(report: dict[str, Any]) -> None:
+    header = f"{report['name']} - covenants"
+    print(header)
+    print("=" * len(header))
+    print()
+
+    observations = report["observations"]
+    periods = sorted({o["period"] for o in observations})
+    endings = {o["period"]: o["ending"][:7] for o in observations}
+
+    label_width = max(
+        max((len(c["name"]) for c in report["covenants"]), default=0), len("Cushion")
+    ) + 4
+    column = 11
+
+    def row(label: str, cells: list[str]) -> str:
+        return "  " + label.ljust(label_width) + "".join(c.rjust(column) for c in cells)
+
+    print(row("", [f"P{i}" for i in periods]))
+    print(row("", [endings[i] for i in periods]))
+    print("  " + "-" * (label_width + column * len(periods)))
+
+    for covenant in report["covenants"]:
+        rows = {o["period"]: o for o in observations if o["covenant"] == covenant["name"]}
+        print(row(covenant["name"], [_ratio(rows[i]["actual"]) for i in periods]))
+        print(
+            row(
+                "  covenant",
+                [
+                    _NO_RATIO if not rows[i]["tested"] else _ratio(rows[i]["threshold"])
+                    for i in periods
+                ],
+            )
+        )
+        print(
+            row(
+                "  cushion",
+                [
+                    _NO_RATIO
+                    if rows[i]["ebitda_cushion"] is None or not rows[i]["tested"]
+                    else f"{rows[i]['ebitda_cushion']:.1%}"
+                    for i in periods
+                ],
+            )
+        )
+        print(
+            row(
+                "  status",
+                [
+                    "-" if not rows[i]["tested"] else ("ok" if rows[i]["passes"] else "BREACH")
+                    for i in periods
+                ],
+            )
+        )
+        print()
+
+    tightest = report["tightest"]
+    if tightest is not None:
+        print("  Tightest test")
+        print(f"    {tightest['covenant']} in period {tightest['period']}")
+        print(
+            f"    {'EBITDA projected':<26}"
+            f"{_format_money(Decimal(tightest['ebitda'])):>14}"
+        )
+        if tightest["ebitda_at_breach"] is not None:
+            print(
+                f"    {'Breaches below':<26}"
+                f"{_format_money(Decimal(tightest['ebitda_at_breach'])):>14}"
+            )
+        if tightest["ebitda_cushion"] is not None:
+            print(f"    {'Cushion':<26}{tightest['ebitda_cushion']:>13.1%}")
+        print()
+
+    first = report["first_breach"]
+    if first is None:
+        print("  No maintenance test is breached across the hold.")
+    else:
+        print(
+            f"    {first['covenant']} is breached in period {first['period']} "
+            f"({first['ending']})."
+        )
+        if first["actual"] is not None:
+            print(
+                f"    The test reads {first['actual']:.2f}x against a "
+                f"{first['threshold']:.2f}x covenant."
+            )
+        else:
+            print(f"    {first['note'].capitalize()}.")
+        print(f"    {len(report['breaches'])} of {len(observations)} tests fail.")
+
+
+def _cmd_covenants(args: argparse.Namespace) -> int:
+    deal = load_deal(args.file)
+    report = _covenant_report(deal)
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        _print_covenants(report)
+    # A breached case is a finding, not a failure of the tool, so the exit code
+    # is only non-zero where a caller would want a script to stop.
+    return 0
+
+
 def _cmd_project(args: argparse.Namespace) -> int:
     deal = load_deal(args.file)
     report = _projection_report(deal)
@@ -681,6 +843,19 @@ def build_parser() -> argparse.ArgumentParser:
     schedule.add_argument("file", help="path to a deal file (JSON)")
     schedule.add_argument("--json", action="store_true", help="emit JSON instead of a table")
     schedule.set_defaults(handler=_cmd_schedule)
+
+    covenants = sub.add_parser(
+        "covenants",
+        help="maintenance tests, headroom, and the first breach",
+        description=(
+            "Test the maintenance covenants in a deal file against the schedule "
+            "and the operating case, and report how far EBITDA can fall before "
+            "each one trips."
+        ),
+    )
+    covenants.add_argument("file", help="path to a deal file (JSON)")
+    covenants.add_argument("--json", action="store_true", help="emit JSON instead of a table")
+    covenants.set_defaults(handler=_cmd_covenants)
 
     return parser
 

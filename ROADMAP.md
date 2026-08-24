@@ -38,9 +38,9 @@ would actually read.
 
 ## Phase 5 — Covenants
 
-- [ ] Leverage, interest coverage and fixed-charge coverage tests
-- [ ] Headroom measurement and breach detection with the period identified
-- [ ] Sweep percentages stepping with a leverage grid
+- [x] Leverage, interest coverage and fixed-charge coverage tests
+- [x] Headroom measurement and breach detection with the period identified
+- [x] Sweep percentages stepping with a leverage grid
 
 ## Phase 6 — Returns
 

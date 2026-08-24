@@ -51,6 +51,8 @@ __all__ = [
     "DebtPeriod",
     "DebtSchedule",
     "InterestBasis",
+    "SweepGrid",
+    "SweepStep",
     "Tranche",
     "TranchePeriod",
     "TrancheKind",
@@ -288,6 +290,99 @@ class Tranche:
 
 
 @dataclass(frozen=True, slots=True)
+class SweepStep:
+    """One rung of a sweep grid: a leverage level and the rate that applies at it."""
+
+    leverage: Money
+    rate: Money
+
+    @classmethod
+    def of(cls, leverage: Numeric, rate: Numeric) -> SweepStep:
+        return cls(leverage=money(leverage), rate=money(rate))
+
+    def __post_init__(self) -> None:
+        if self.leverage < 0:
+            raise ValueError("a sweep step is set at a leverage level, so not negative")
+        if not (0 <= self.rate <= 1):
+            raise ValueError("a sweep rate is a share, so between 0 and 1")
+
+
+@dataclass(frozen=True, slots=True)
+class SweepGrid:
+    """A sweep percentage that steps down as leverage falls.
+
+    Almost no credit agreement sweeps a flat percentage for the life of the
+    loan. The usual shape is fifty per cent of excess cash flow, stepping to
+    twenty-five and then to nothing as leverage comes through agreed levels,
+    which is the lenders paying for deleveraging with the sponsor's own cash. A
+    model that sweeps a flat rate repays too fast in the good years and reports
+    an exit leverage the documents would never have produced.
+
+    ``steps`` are read as "at this leverage or above, sweep this much", and are
+    sorted highest first regardless of the order given. Below every step the
+    grid returns ``floor``, which is zero in the ordinary case.
+
+    *Which leverage the step is read against* is the decision that matters. The
+    obvious answer — the leverage of the period being swept — makes the sweep
+    depend on the closing balance, which depends on the sweep, and drops a step
+    function into the middle of the interest fixed point, where it can sit and
+    oscillate between two rungs forever. The step is resolved against the
+    leverage at the most recent test date instead: the certificate delivered for
+    the period just ended. That is not a modelling convenience but how the
+    payment is actually made — an excess cash flow sweep is paid in arrears, at
+    a rate set by a certificate that was signed before the cash was counted.
+    """
+
+    steps: tuple[SweepStep, ...]
+    floor: Money = ZERO
+    net: bool = True
+
+    @classmethod
+    def of(
+        cls,
+        steps: Sequence[tuple[Numeric, Numeric]] | Sequence[SweepStep],
+        *,
+        floor: Numeric = 0,
+        net: bool = True,
+    ) -> SweepGrid:
+        rungs = tuple(
+            s if isinstance(s, SweepStep) else SweepStep.of(s[0], s[1]) for s in steps
+        )
+        return cls(steps=rungs, floor=money(floor), net=net)
+
+    def __post_init__(self) -> None:
+        if not self.steps:
+            raise ValueError("a sweep grid needs at least one step")
+        if not (0 <= self.floor <= 1):
+            raise ValueError("the floor sweep rate is a share, so between 0 and 1")
+        levels = [s.leverage for s in self.steps]
+        if len(set(levels)) != len(levels):
+            raise ValueError("two steps set at the same leverage contradict each other")
+        object.__setattr__(
+            self, "steps", tuple(sorted(self.steps, key=lambda s: s.leverage, reverse=True))
+        )
+
+    @property
+    def top_rate(self) -> Money:
+        """The rate that applies at the highest rung, and to unknown leverage."""
+        return self.steps[0].rate
+
+    def rate_at(self, leverage: Money | None) -> Money:
+        """The sweep rate for a certified leverage level.
+
+        ``None`` means the ratio could not be measured — no earnings to divide
+        by. That is the state in which lenders would least like the sweep
+        relaxed, so it takes the top rate rather than the floor.
+        """
+        if leverage is None:
+            return self.top_rate
+        for step in self.steps:
+            if leverage >= step.leverage:
+                return step.rate
+        return self.floor
+
+
+@dataclass(frozen=True, slots=True)
 class CapitalStructure:
     """The whole stack, plus the rules that govern how cash moves through it.
 
@@ -306,6 +401,7 @@ class CapitalStructure:
     tranches: tuple[Tranche, ...]
     minimum_cash: Money = ZERO
     sweep_rate: Money = ONE
+    sweep_grid: SweepGrid | None = None
     base_rate: Driver | None = None
     day_count: DayCount = DayCount.ACT_360
     interest_basis: InterestBasis = InterestBasis.AVERAGE
@@ -320,6 +416,7 @@ class CapitalStructure:
         *,
         minimum_cash: Numeric = 0,
         sweep_rate: Numeric = 1,
+        sweep_grid: SweepGrid | None = None,
         base_rate: Driver | None = None,
         day_count: DayCount = DayCount.ACT_360,
         interest_basis: InterestBasis = InterestBasis.AVERAGE,
@@ -331,6 +428,7 @@ class CapitalStructure:
             tranches=tuple(tranches),
             minimum_cash=money(minimum_cash),
             sweep_rate=money(sweep_rate),
+            sweep_grid=sweep_grid,
             base_rate=base_rate,
             day_count=day_count,
             interest_basis=interest_basis,
@@ -349,6 +447,15 @@ class CapitalStructure:
             raise ValueError("the minimum cash balance must not be negative")
         if not (0 <= self.sweep_rate <= 1):
             raise ValueError("the sweep rate is a share, so between 0 and 1")
+        if self.sweep_grid is not None and self.sweep_rate != ONE:
+            # Refused rather than resolved by precedence. A structure carrying
+            # both a grid and a flat rate has two answers to the same question,
+            # and quietly preferring one would hide a contradiction in the
+            # description of the deal.
+            raise ValueError(
+                "a sweep grid sets the rate for every period, so a flat sweep "
+                "rate alongside it says two different things"
+            )
         if not (0 < self.damping <= 1):
             raise ValueError("damping must be greater than 0 and at most 1")
         if self.tolerance <= 0:
@@ -503,6 +610,8 @@ class DebtPeriod:
     iterations: int
     residual: Money
     damping_used: Money = ONE
+    sweep_rate: Money = ONE
+    certified_leverage: Money | None = None
 
     @property
     def index(self) -> int:
@@ -645,12 +754,21 @@ class DebtSchedule:
         unlevered_cash_flows: Sequence[Numeric],
         *,
         opening_cash: Numeric = 0,
+        ebitda: Sequence[Numeric] | None = None,
+        opening_ebitda: Numeric | None = None,
     ) -> DebtSchedule:
         """Roll the structure forward, one period at a time.
 
         Takes bare periods and cash flows rather than an operating model, so the
         schedule can be exercised against a hand-written cash-flow series. See
         :meth:`from_operating_model` for the usual entry point.
+
+        ``ebitda`` is needed only by a sweep grid, which reads a leverage level
+        to decide what share of the period's excess cash flow is swept.
+        ``opening_ebitda`` is the level the first period's step is set against —
+        the LTM figure the deal was priced on. Without it the first projected
+        period stands in, which is the pro forma reading of the same test and is
+        the closest thing available when the schedule is run on its own.
         """
         if len(periods) != len(unlevered_cash_flows):
             raise ValueError(
@@ -658,6 +776,16 @@ class DebtSchedule:
             )
         if not periods:
             raise ValueError("a schedule needs at least one period")
+        grid = structure.sweep_grid
+        if grid is not None and ebitda is None:
+            raise ValueError(
+                "a sweep grid steps with leverage, so the schedule needs the "
+                "EBITDA each step is measured against"
+            )
+        if ebitda is not None and len(ebitda) != len(periods):
+            raise ValueError(
+                f"{len(periods)} periods against {len(ebitda)} EBITDA figures"
+            )
 
         balances = {t.name: t.face for t in structure.tranches}
         cash = money(opening_cash)
@@ -666,6 +794,24 @@ class DebtSchedule:
 
         rows: list[DebtPeriod] = []
         for i, period in enumerate(periods):
+            certified: Money | None = None
+            rate = structure.sweep_rate
+            if grid is not None and ebitda is not None:
+                # The certificate for the period just ended: debt at the start
+                # of this period against the earnings of the one before it.
+                earnings = (
+                    money(ebitda[i - 1])
+                    if i > 0
+                    else money(opening_ebitda if opening_ebitda is not None else ebitda[0])
+                )
+                debt = sum(balances.values(), ZERO)
+                if grid.net:
+                    debt -= cash
+                certified = safe_div(debt, earnings) if earnings > 0 else None
+                if certified is None and debt <= 0:
+                    certified = ZERO
+                rate = grid.rate_at(certified)
+
             row = _solve_period(
                 structure,
                 index=i,
@@ -673,6 +819,8 @@ class DebtSchedule:
                 opening=balances,
                 opening_cash=cash,
                 unlevered_free_cash_flow=money(unlevered_cash_flows[i]),
+                sweep_rate=rate,
+                certified_leverage=certified,
             )
             rows.append(row)
             balances = {t.name: t.closing for t in row.tranches}
@@ -687,6 +835,7 @@ class DebtSchedule:
         model: OperatingModel,
         *,
         opening_cash: Numeric = 0,
+        opening_ebitda: Numeric | None = None,
     ) -> DebtSchedule:
         """Run the structure against an operating case."""
         return cls.run(
@@ -694,6 +843,8 @@ class DebtSchedule:
             [p.period for p in model],
             [p.unlevered_free_cash_flow for p in model],
             opening_cash=opening_cash,
+            ebitda=[p.ebitda for p in model],
+            opening_ebitda=opening_ebitda,
         )
 
     # -- Aggregates ------------------------------------------------------
@@ -822,6 +973,8 @@ def _one_pass(
     opening_cash: Money,
     unlevered_free_cash_flow: Money,
     guess: dict[str, Money],
+    sweep_rate: Money,
+    certified_leverage: Money | None = None,
 ) -> DebtPeriod:
     """Run a period once, taking ``guess`` as the closing balances interest accrues on.
 
@@ -912,7 +1065,7 @@ def _one_pass(
         unlevered_free_cash_flow - cash_cost - sum(mandatory.values(), ZERO), ZERO
     )
     available = max(after_mandatory - structure.minimum_cash, ZERO)
-    pot = min(excess * structure.sweep_rate, available)
+    pot = min(excess * sweep_rate, available)
     for _, group in structure.sweep_order:
         if pot <= 0:
             break
@@ -965,6 +1118,8 @@ def _one_pass(
         closing_cash=after_mandatory - sum(sweep.values(), ZERO),
         iterations=1,
         residual=ZERO,
+        sweep_rate=sweep_rate,
+        certified_leverage=certified_leverage,
     )
 
 
@@ -976,6 +1131,8 @@ def _solve_period(
     opening: dict[str, Money],
     opening_cash: Money,
     unlevered_free_cash_flow: Money,
+    sweep_rate: Money,
+    certified_leverage: Money | None = None,
 ) -> DebtPeriod:
     """Find the closing balances consistent with the interest they generate.
 
@@ -1005,6 +1162,8 @@ def _solve_period(
             opening_cash=opening_cash,
             unlevered_free_cash_flow=unlevered_free_cash_flow,
             guess=opening,
+            sweep_rate=sweep_rate,
+            certified_leverage=certified_leverage,
         )
 
     guess = dict(opening)
@@ -1019,6 +1178,8 @@ def _solve_period(
             opening_cash=opening_cash,
             unlevered_free_cash_flow=unlevered_free_cash_flow,
             guess=guess,
+            sweep_rate=sweep_rate,
+            certified_leverage=certified_leverage,
         )
         produced = {row.name: row.closing for row in result.tranches}
         residual = max((abs(produced[k] - guess[k]) for k in guess), default=ZERO)
