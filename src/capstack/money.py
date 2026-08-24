@@ -16,6 +16,7 @@ carried at high precision and rounded only when it is presented.
 from __future__ import annotations
 
 from decimal import ROUND_HALF_EVEN, Context, Decimal, InvalidOperation, setcontext
+from collections.abc import Sequence
 from typing import Union
 
 __all__ = [
@@ -29,6 +30,7 @@ __all__ = [
     "quantize",
     "safe_div",
     "is_close",
+    "allocate_pro_rata",
 ]
 
 Money = Decimal
@@ -127,3 +129,40 @@ def is_close(a: Money, b: Money, *, tolerance: Numeric = "0.01") -> bool:
     computed totals agree to the cent, not whether they are bit-identical.
     """
     return abs(a - b) <= money(tolerance)
+
+
+def allocate_pro_rata(pot: Money, claims: Sequence[Money]) -> list[Money]:
+    """Split ``pot`` across ``claims`` pro rata, exactly and without residue.
+
+    Every share but one is computed pro rata and the remaining claim takes what
+    is left over. Pro-rating all of them independently would leave a residue of
+    a few billionths whenever the ratio does not terminate, and a residue is
+    precisely what stops a balance from reaching zero — a tranche that will not
+    amortise away, or a security that is repaid in full and still shows a
+    fraction of a penny outstanding.
+
+    The remainder goes to the last claim with something outstanding, never
+    simply to the last in the list. A claim already at zero is entitled to
+    nothing, and handing it the rounding dust gives it a balance of a few
+    billionths — of either sign — that nothing afterwards can clear, because
+    both the payment and the balance are floored at zero.
+
+    Nobody is paid more than they are owed: the total distributed is the lesser
+    of ``pot`` and the claims against it.
+    """
+    total = sum(claims, ZERO)
+    if total <= 0 or pot <= 0:
+        return [ZERO for _ in claims]
+    payable = min(pot, total)
+    plug = max(i for i, claim in enumerate(claims) if claim > 0)
+
+    shares = [ZERO for _ in claims]
+    remaining = payable
+    for i, claim in enumerate(claims):
+        if i == plug or claim <= 0:
+            continue
+        share = payable * claim / total
+        shares[i] = share
+        remaining -= share
+    shares[plug] = min(max(remaining, ZERO), claims[plug])
+    return shares
