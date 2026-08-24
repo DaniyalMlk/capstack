@@ -485,6 +485,7 @@ class TestTheCircularity:
                 opening_cash=cash,
                 unlevered_free_cash_flow=row.unlevered_free_cash_flow,
                 guess=converged,
+                sweep_rate=row.sweep_rate,
             )
             for r in again.tranches:
                 assert abs(r.closing - converged[r.name]) <= s.tolerance
