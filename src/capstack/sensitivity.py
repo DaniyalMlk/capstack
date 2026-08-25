@@ -88,6 +88,19 @@ class Unit(Enum):
         return self.value
 
 
+def _round(value: Money, places: int) -> Money:
+    """Round for display, without carrying a sign onto a zero.
+
+    A rate of minus four thousandths of a percent rounds to nought, and
+    printing that as ``-0.0%`` reads as a defect in the model rather than as a
+    small number. The sign is dropped only once the magnitude has already gone.
+    """
+    rounded = quantize(value, places)
+    # ``abs`` rather than ZERO, so a zero keeps the scale of its neighbours and
+    # the column still reads 0.0% beside 17.1% rather than a bare 0%.
+    return abs(rounded) if rounded == 0 else rounded
+
+
 def format_value(unit: Unit, value: Money) -> str:
     """Render ``value`` the way its unit is spoken.
 
@@ -96,19 +109,19 @@ def format_value(unit: Unit, value: Money) -> str:
     leverage has is the kind of thing that gets noticed in a committee.
     """
     if unit is Unit.RATE or unit is Unit.SHARE:
-        return f"{quantize(value * money(100), 1)}%"
+        return f"{_round(value * money(100), 1)}%"
     if unit is Unit.MULTIPLE or unit is Unit.TURNS:
-        return f"{quantize(value, 2)}x"
+        return f"{_round(value, 2)}x"
     if unit is Unit.YEARS:
-        return f"{quantize(value, 0)}y"
+        return f"{_round(value, 0)}y"
     if unit is Unit.POINTS:
-        points = quantize(value * money(100), 2)
+        points = _round(value * money(100), 2)
         # Trailing zeros are stripped by hand rather than by ``normalize``,
         # which turns fifty into 5E+1 and makes a committee pack look broken.
         digits = f"{points:f}".rstrip("0").rstrip(".") or "0"
         sign = "+" if points > 0 else ""
         return f"{sign}{digits}pp"
-    return f"{quantize(value, 1):,}"
+    return f"{_round(value, 1):,}"
 
 
 # -- Dimensions ----------------------------------------------------------

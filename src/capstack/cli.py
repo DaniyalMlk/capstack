@@ -18,6 +18,7 @@ from .covenants import CovenantObservation
 from .daycount import DayCount
 from .money import quantize
 from .returns import AmbiguousIRR, CashFlow, CashFlowStream, IRRError
+from .sensitivity import Axis, Grid, Metric, SensitivityError, format_value
 from .spec import Deal, DealSpecError, load_deal
 from .transaction import Transaction
 
@@ -889,6 +890,153 @@ def _print_exit(report: dict[str, Any]) -> None:
         print("    the shareholders, who owe nothing beyond their capital.")
 
 
+# -- Sensitivity ---------------------------------------------------------
+
+#: Marks in the table, kept to one column each so the grid stays aligned.
+_BREACH_MARK = "!"
+_BASE_MARK = "*"
+_NO_CELL = "-"
+
+
+def _sensitivity_report(
+    deal: Deal, rows: Axis, columns: Axis, metric: Metric
+) -> dict[str, Any]:
+    grid = Grid.run(deal, rows, columns, metric)
+    return {
+        "name": deal.name,
+        "metric": {
+            "name": str(metric),
+            "label": metric.label,
+            "unit": str(metric.unit),
+        },
+        "rows": {
+            "dimension": str(rows.dimension),
+            "label": rows.dimension.label,
+            "unit": str(rows.dimension.unit),
+            "values": [_amount_str(v) for v in rows],
+            "labels": [rows.format(v) for v in rows],
+            "base": [rows.is_base(v, deal) for v in rows],
+        },
+        "columns": {
+            "dimension": str(columns.dimension),
+            "label": columns.dimension.label,
+            "unit": str(columns.dimension.unit),
+            "values": [_amount_str(v) for v in columns],
+            "labels": [columns.format(v) for v in columns],
+            "base": [columns.is_base(v, deal) for v in columns],
+        },
+        "base": {
+            "value": None if grid.base is None else _amount_str(grid.base),
+            "label": (
+                None if grid.base is None else format_value(metric.unit, grid.base)
+            ),
+            "note": grid.base_note,
+        },
+        "cells": [
+            [
+                {
+                    "value": None if cell.value is None else _amount_str(cell.value),
+                    "label": (
+                        None
+                        if cell.value is None
+                        else format_value(metric.unit, cell.value)
+                    ),
+                    "note": cell.note,
+                    "breached": cell.breached,
+                    "breach": cell.breach_note,
+                }
+                for cell in line
+            ]
+            for line in grid
+        ],
+    }
+
+
+def _print_sensitivity(report: dict[str, Any]) -> None:
+    header = f"{report['name']} - sensitivity"
+    print(header)
+    print("=" * len(header))
+    print()
+
+    metric = report["metric"]
+    rows, columns = report["rows"], report["columns"]
+    print(f"  {metric['label']}")
+    print(f"    {columns['label'].lower()} across, {rows['label'].lower()} down")
+    base = report["base"]
+    if base["label"] is not None:
+        print(f"    base case {base['label']}, marked {_BASE_MARK}")
+    elif base["note"]:
+        print(f"    base case: {base['note']}")
+    print()
+
+    cells = report["cells"]
+    # Every cell carries a mark or a space in the same position, so the columns
+    # line up whether or not anything in them is flagged.
+    rendered = [
+        [
+            (_NO_CELL if c["label"] is None else c["label"])
+            + (_BREACH_MARK if c["breached"] else " ")
+            for c in line
+        ]
+        for line in cells
+    ]
+    # The base mark sits on the axis label rather than in the cell, so a
+    # reader finds the file's own case by following one row and one column in
+    # rather than hunting for a decorated cell in the middle of the table.
+    headings = [
+        label + (_BASE_MARK if flag else "")
+        for label, flag in zip(columns["labels"], columns["base"])
+    ]
+    stub = max((len(label) for label in rows["labels"]), default=0) + 2
+    width = max(
+        max((len(text) for line in rendered for text in line), default=0),
+        max((len(h) for h in headings), default=0),
+    ) + 3
+
+    print(("    " + "".ljust(stub) + "".join(h.rjust(width) for h in headings)).rstrip())
+    for i, line in enumerate(rendered):
+        label = rows["labels"][i] + (_BASE_MARK if rows["base"][i] else "")
+        print(
+            ("    " + label.ljust(stub) + "".join(t.rjust(width) for t in line)).rstrip()
+        )
+
+    legend = []
+    if any(c["breached"] for line in cells for c in line):
+        legend.append(f"{_BREACH_MARK} a covenant breaches on this case")
+    if any(c["label"] is None for line in cells for c in line):
+        legend.append(f"{_NO_CELL} no answer; see below")
+    if any(rows["base"]) or any(columns["base"]):
+        legend.append(f"{_BASE_MARK} the assumption the file describes")
+    if legend:
+        print()
+        for entry in legend:
+            print(f"    {entry}")
+
+    # Distinct reasons only. A row of cells that all failed for the same reason
+    # is one fact about the deal, not eight.
+    reasons: list[str] = []
+    for line in cells:
+        for cell in line:
+            if cell["label"] is None and cell["note"] not in reasons:
+                reasons.append(cell["note"])
+    if reasons:
+        print()
+        for reason in reasons:
+            print(f"    {_NO_CELL} {reason}")
+
+
+def _cmd_sensitivity(args: argparse.Namespace) -> int:
+    deal = load_deal(args.file)
+    report = _sensitivity_report(
+        deal, Axis.parse(args.rows), Axis.parse(args.columns), Metric(args.metric)
+    )
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        _print_sensitivity(report)
+    return 0
+
+
 def _cmd_exit(args: argparse.Namespace) -> int:
     deal = load_deal(args.file)
     report = _exit_report(deal)
@@ -1023,6 +1171,39 @@ def build_parser() -> argparse.ArgumentParser:
     exit_.add_argument("--json", action="store_true", help="emit JSON instead of a table")
     exit_.set_defaults(handler=_cmd_exit)
 
+    sensitivity = sub.add_parser(
+        "sensitivity",
+        help="a metric across two assumptions, with the deal rebuilt per cell",
+        description=(
+            "Run the whole engine at every intersection of two assumptions and "
+            "report one figure per cell. An axis is written as "
+            "DIMENSION:v1,v2,v3 - levels as they are said (entry-multiple:11,"
+            "11.5,12), shifts in percentage points off the file's own case "
+            "(ebitda-margin:-1.5,0,1.5)."
+        ),
+    )
+    sensitivity.add_argument("file", help="path to a deal file (JSON)")
+    sensitivity.add_argument(
+        "--rows",
+        required=True,
+        metavar="DIMENSION:VALUES",
+        help="the axis down the side, as exit-multiple:9,10,11",
+    )
+    sensitivity.add_argument(
+        "--columns",
+        required=True,
+        metavar="DIMENSION:VALUES",
+        help="the axis across the top, as entry-multiple:11,11.5,12",
+    )
+    sensitivity.add_argument(
+        "--metric",
+        default=Metric.IRR.value,
+        choices=[m.value for m in Metric],
+        help="what each cell reports (default: %(default)s)",
+    )
+    sensitivity.add_argument("--json", action="store_true", help="emit JSON instead of a table")
+    sensitivity.set_defaults(handler=_cmd_sensitivity)
+
     return parser
 
 
@@ -1032,7 +1213,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         result: int = args.handler(args)
         return result
-    except DealSpecError as exc:
+    except (DealSpecError, SensitivityError) as exc:
         print(f"capstack: {exc}", file=sys.stderr)
         return 1
     except (ValueError, ZeroDivisionError) as exc:
