@@ -15,8 +15,9 @@ from __future__ import annotations
 import json
 from datetime import date
 from decimal import Decimal, InvalidOperation
+from enum import Enum
 from pathlib import Path
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import Any
 
 from dataclasses import dataclass
@@ -33,13 +34,21 @@ from .debt import (
     TrancheKind,
 )
 from .drivers import Driver
-from .money import Money, money
+from .money import ONE, ZERO, Money, money
 from .operating import DEFAULT_NOL_USAGE_LIMIT, OperatingAssumptions, OperatingModel
 from .outcome import Outcome, Security, SecurityKind
 from .periods import Frequency, PeriodGrid
 from .transaction import DebtFunding, EntryValuation, LineItem, Transaction
 
-__all__ = ["Deal", "DealSpecError", "load_deal", "parse_deal"]
+__all__ = [
+    "Deal",
+    "DealSpecError",
+    "EquityPlan",
+    "Funding",
+    "SecurityPlan",
+    "load_deal",
+    "parse_deal",
+]
 
 #: The default exit fee rate, named so the dataclass field below can carry it.
 ZERO_RATE = money(0)
@@ -50,6 +59,138 @@ _FREQUENCIES = {
     "quarterly": Frequency.QUARTERLY,
     "monthly": Frequency.MONTHLY,
 }
+
+
+class Funding(Enum):
+    """Where a security's capital comes from.
+
+    ``SPONSOR`` and ``ROLLOVER`` point at cheques the funding table derives.
+    ``STATED`` is an amount written directly into the file, which is the right
+    answer for a co-investor whose commitment is fixed and the wrong one for
+    anything that moves when the price does.
+    """
+
+    SPONSOR = "sponsor"
+    ROLLOVER = "rollover"
+    STATED = "stated"
+
+    def __str__(self) -> str:
+        return self.value
+
+
+@dataclass(frozen=True, slots=True)
+class SecurityPlan:
+    """One instrument, described the way the file describes it.
+
+    This exists because a ``Security`` holds an amount, and an amount is the
+    wrong thing to remember about a sponsor cheque. The sponsor's contribution
+    is the plug that balances the funding table: move the entry multiple by a
+    quarter of a turn and the cheque moves with it. A plan resolved once at
+    parse time and then carried around as a number would report every multiple
+    in a sensitivity column against the base case's denominator, which is a
+    quiet, plausible and completely wrong answer.
+
+    So the *description* survives — 85% of whatever the sponsor writes — and the
+    amount is derived against whichever transaction is being valued.
+    """
+
+    name: str
+    kind: SecurityKind
+    funding: Funding
+    share: Money = ONE
+    amount: Money = ZERO
+    ownership: Money = ZERO
+    preferred_rate: Money = ZERO
+    compounding: bool = True
+    seniority: int = 0
+
+    def __post_init__(self) -> None:
+        # Everything checkable without a transaction is checked here, so a
+        # malformed file still fails when it is read rather than at the moment
+        # somebody asks for a number.
+        if not self.name.strip():
+            raise ValueError("a security needs a name")
+        if not (0 <= self.share <= 1):
+            raise ValueError(f"{self.name}: a share, so between 0 and 1")
+        if self.amount < 0:
+            raise ValueError(f"{self.name}: capital invested must not be negative")
+        if not (0 <= self.ownership <= 1):
+            raise ValueError(f"{self.name}: ownership is a share, so between 0 and 1")
+        if self.preferred_rate < 0:
+            raise ValueError(f"{self.name}: the preferred return must not be negative")
+        if self.preferred_rate and self.kind is not SecurityKind.PREFERRED:
+            raise ValueError(
+                f"{self.name}: a preferred return accrues on preferred capital, and "
+                f"this is described as {self.kind}"
+            )
+        if self.seniority < 0:
+            raise ValueError(f"{self.name}: seniority must not be negative")
+
+    def capital(self, transaction: Transaction) -> Money:
+        """What this instrument puts in, given a transaction.
+
+        The sponsor cheque is floored at zero. A deal funded entirely by debt
+        and rollover has a negative plug — the structure raises more than the
+        purchase needs — and that is cash coming off the table rather than
+        capital contributed at a negative multiple.
+        """
+        if self.funding is Funding.STATED:
+            return self.amount
+        cheque = (
+            max(transaction.sponsor_equity, ZERO)
+            if self.funding is Funding.SPONSOR
+            else transaction.rollover_equity
+        )
+        return cheque * self.share
+
+    def resolve(self, transaction: Transaction) -> Security:
+        """This plan as a security, priced against ``transaction``."""
+        return Security(
+            name=self.name,
+            kind=self.kind,
+            invested=self.capital(transaction),
+            ownership=self.ownership,
+            preferred_rate=self.preferred_rate,
+            compounding=self.compounding,
+            seniority=self.seniority,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class EquityPlan:
+    """The equity as the file describes it, before any transaction is applied."""
+
+    plans: tuple[SecurityPlan, ...] = ()
+
+    def __post_init__(self) -> None:
+        names = [p.name for p in self.plans]
+        if len(names) != len(set(names)):
+            raise ValueError("security names must be distinct")
+        # Every cheque referenced has to be fully allocated. Capital left over
+        # is capital that shares in nothing, which is never what was meant and
+        # would quietly overstate every multiple in the report.
+        claimed: dict[Funding, Money] = {}
+        for plan in self.plans:
+            if plan.funding is not Funding.STATED:
+                claimed[plan.funding] = claimed.get(plan.funding, ZERO) + plan.share
+        for source, total in claimed.items():
+            if total != ONE:
+                raise ValueError(
+                    f"the {source} cheque is {total} allocated; the shares of a "
+                    f"cheque must come to exactly 1"
+                )
+
+    def __bool__(self) -> bool:
+        return bool(self.plans)
+
+    def __len__(self) -> int:
+        return len(self.plans)
+
+    def __iter__(self) -> Iterator[SecurityPlan]:
+        return iter(self.plans)
+
+    def resolve(self, transaction: Transaction) -> tuple[Security, ...]:
+        return tuple(plan.resolve(transaction) for plan in self.plans)
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,7 +216,17 @@ class Deal:
     covenants: tuple[Covenant, ...] = ()
     exit_multiple: Money | None = None
     exit_fee_rate: Money = ZERO_RATE
-    securities: tuple[Security, ...] = ()
+    equity: EquityPlan = EquityPlan()
+
+    @property
+    def securities(self) -> tuple[Security, ...]:
+        """The equity, priced against this deal's transaction.
+
+        Derived rather than stored, so a deal rebuilt on a different price
+        carries an equity stack that agrees with the funding table that price
+        produced.
+        """
+        return self.equity.resolve(self.transaction)
 
     @property
     def has_projection(self) -> bool:
@@ -380,17 +531,19 @@ _DAY_COUNTS = {c.value.lower(): c for c in DayCount}
 _INTEREST_BASES = {b.value: b for b in InterestBasis}
 _MEASURES = {m.value: m for m in Measure}
 _SECURITY_KINDS = {k.value: k for k in SecurityKind}
+_FUNDING_SOURCES = {
+    Funding.SPONSOR.value: Funding.SPONSOR,
+    Funding.ROLLOVER.value: Funding.ROLLOVER,
+}
 
 
-def _parse_security(
-    data: Any, index: int, transaction: Transaction
-) -> tuple[Security, str | None, Money]:
-    """Read one equity instrument, and what share of a cheque funds it.
+def _parse_security(data: Any, index: int) -> SecurityPlan:
+    """Read one equity instrument, and what funds it.
 
     Capital can be stated outright or, more usefully, as a share of a cheque the
-    funding table already derived. The sponsor's contribution is a plug — it is
-    whatever balances the deal — so a file that restates it as a number will
-    disagree with the funding table the first time any other assumption moves.
+    funding table derives. The sponsor's contribution is a plug — it is whatever
+    balances the deal — so a file that restates it as a number will disagree
+    with the funding table the first time any other assumption moves.
     """
     where = f"exit.equity[{index}]"
     if not isinstance(data, dict):
@@ -414,30 +567,30 @@ def _parse_security(
             f"{where}: 'invested' and 'of' are two answers to the same question"
         )
 
-    share = _optional_amount(data, "share", where, default="1")
     if source is None:
-        invested = _amount(data["invested"], f"{where}.invested")
+        funding = Funding.STATED
+        amount = _amount(data["invested"], f"{where}.invested")
+        share = money(1)
     else:
         name = str(source).lower()
-        cheques = {
-            "sponsor": max(transaction.sponsor_equity, money(0)),
-            "rollover": transaction.rollover_equity,
-        }
-        if name not in cheques:
+        if name not in _FUNDING_SOURCES:
             raise DealSpecError(
                 f"{where}.of: unknown source {source!r}; expected sponsor or rollover"
             )
+        funding = _FUNDING_SOURCES[name]
+        amount = money(0)
+        share = _optional_amount(data, "share", where, default="1")
         if not (0 <= share <= 1):
             raise DealSpecError(f"{where}.share: a share, so between 0 and 1")
-        invested = cheques[name] * share
-        source = name
 
     compounding = _flag(data, "compounding", where)
     try:
-        security = Security.of(
-            str(_require(data, "name", where)),
-            _SECURITY_KINDS[kind_name],
-            invested,
+        return SecurityPlan(
+            name=str(_require(data, "name", where)),
+            kind=_SECURITY_KINDS[kind_name],
+            funding=funding,
+            share=share,
+            amount=amount,
             ownership=_optional_amount(data, "ownership", where),
             preferred_rate=_optional_amount(data, "preferred_rate", where),
             compounding=True if compounding is None else compounding,
@@ -445,12 +598,9 @@ def _parse_security(
         )
     except ValueError as exc:
         raise DealSpecError(f"{where}: {exc}") from exc
-    return security, (str(source) if source is not None else None), share
 
 
-def _parse_exit(
-    data: Any, transaction: Transaction
-) -> tuple[Money | None, Money, tuple[Security, ...]]:
+def _parse_exit(data: Any) -> tuple[Money | None, Money, EquityPlan]:
     """Read the exit assumptions and the equity that shares in them."""
     where = "exit"
     if not isinstance(data, dict):
@@ -465,27 +615,15 @@ def _parse_exit(
 
     equity_raw = data.get("equity")
     if equity_raw is None:
-        return multiple, fee_rate, ()
+        return multiple, fee_rate, EquityPlan()
     if not isinstance(equity_raw, list) or not equity_raw:
         raise DealSpecError(f"{where}.equity: expected a list of securities")
 
-    parsed = [
-        _parse_security(item, i, transaction) for i, item in enumerate(equity_raw)
-    ]
-    # Every cheque referenced has to be fully allocated. Capital left over is
-    # capital that shares in nothing, which is never what was meant and would
-    # quietly overstate every multiple in the report.
-    claimed: dict[str, Money] = {}
-    for _, source, share in parsed:
-        if source is not None:
-            claimed[source] = claimed.get(source, money(0)) + share
-    for source, total in claimed.items():
-        if total != 1:
-            raise DealSpecError(
-                f"{where}.equity: the {source} cheque is {total} allocated; the "
-                f"shares of a cheque must come to exactly 1"
-            )
-    return multiple, fee_rate, tuple(security for security, _, _ in parsed)
+    plans = tuple(_parse_security(item, i) for i, item in enumerate(equity_raw))
+    try:
+        return multiple, fee_rate, EquityPlan(plans=plans)
+    except ValueError as exc:
+        raise DealSpecError(f"{where}.equity: {exc}") from exc
 
 
 def _parse_sweep_grid(data: Any, where: str) -> SweepGrid:
@@ -777,16 +915,14 @@ def parse_deal(data: dict[str, Any]) -> Deal:
 
     exit_multiple: Money | None = None
     exit_fee_rate: Money = ZERO_RATE
-    securities: tuple[Security, ...] = ()
+    equity = EquityPlan()
     if data.get("exit") is not None:
         if structure is None or grid is None:
             raise DealSpecError(
                 "exit: there is nothing to exit from; describe the capital "
                 "structure and the projection first"
             )
-        exit_multiple, exit_fee_rate, securities = _parse_exit(
-            data["exit"], transaction
-        )
+        exit_multiple, exit_fee_rate, equity = _parse_exit(data["exit"])
 
     return Deal(
         name=name,
@@ -803,7 +939,7 @@ def parse_deal(data: dict[str, Any]) -> Deal:
         covenants=covenants,
         exit_multiple=exit_multiple,
         exit_fee_rate=exit_fee_rate,
-        securities=securities,
+        equity=equity,
     )
 
 

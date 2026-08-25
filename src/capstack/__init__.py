@@ -57,7 +57,15 @@ from .returns import (
     moic,
     npv_periodic,
 )
-from .spec import Deal, DealSpecError, load_deal, parse_deal
+from .spec import (
+    Deal,
+    DealSpecError,
+    EquityPlan,
+    Funding,
+    SecurityPlan,
+    load_deal,
+    parse_deal,
+)
 from .transaction import (
     DebtFunding,
     EntryValuation,
@@ -89,8 +97,10 @@ __all__ = [
     "Direction",
     "Driver",
     "EntryValuation",
+    "EquityPlan",
     "ExitValuation",
     "Frequency",
+    "Funding",
     "IRRError",
     "InterestBasis",
     "LineItem",
@@ -108,6 +118,7 @@ __all__ = [
     "Security",
     "SecurityKind",
     "SecurityOutcome",
+    "SecurityPlan",
     "SourcesAndUses",
     "SweepGrid",
     "SweepStep",
