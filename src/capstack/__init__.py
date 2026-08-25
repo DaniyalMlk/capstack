@@ -28,7 +28,7 @@ from .debt import (
     TrancheKind,
 )
 from .drivers import Driver
-from .money import Money, allocate_pro_rata, money, quantize, rate
+from .money import Money, allocate_pro_rata, money, quantize, rate, rescale
 from .operating import (
     OperatingAssumptions,
     OperatingModel,
@@ -141,6 +141,7 @@ __all__ = [
     "npv_periodic",
     "parse_deal",
     "quantize",
+    "rescale",
     "rate",
     "year_fraction",
     "__version__",
