@@ -23,6 +23,7 @@ from capstack.sensitivity import (
     SensitivityError,
     Unit,
     format_value,
+    solve,
 )
 from capstack.spec import Deal, load_deal, parse_deal
 
@@ -477,3 +478,144 @@ class TestFormatting:
     def test_an_axis_formats_with_its_own_unit(self) -> None:
         assert Axis.parse("exit-multiple:11").format(money(11)) == "11.00x"
         assert Axis.parse("base-rate:50").format(money("0.5")) == "+50pp"
+
+
+class TestBreakevens:
+    def test_the_crossing_reproduces_the_target_when_run_back(self) -> None:
+        # The strongest check available: take the break-even, put it back into
+        # the engine, and the metric has to come out at the target.
+        deal = example()
+        found = solve(
+            deal,
+            Dimension.EXIT_MULTIPLE,
+            Metric.MOIC,
+            target=money(1),
+            low=money(2),
+            high=money(20),
+        )
+        assert found.found
+        assert found.value is not None
+        at_crossing = Dimension.EXIT_MULTIPLE.apply(deal, found.value).realise().moic
+        assert at_crossing is not None
+        assert is_close(at_crossing, money(1), tolerance="0.000001")
+
+    def test_a_covenant_crossing_reproduces_a_cushion_of_nothing(self) -> None:
+        deal = example()
+        found = solve(
+            deal,
+            Dimension.EBITDA_MARGIN,
+            Metric.CUSHION,
+            low=money("-0.1"),
+            high=money("0.1"),
+        )
+        assert found.found
+        assert found.value is not None
+        flexed = Dimension.EBITDA_MARGIN.apply(deal, found.value)
+        cushion = flexed.test_covenants().minimum_cushion
+        assert cushion is not None
+        assert is_close(cushion, money(0), tolerance="0.000001")
+
+    def test_the_crossing_separates_pass_from_breach(self) -> None:
+        deal = example()
+        found = solve(
+            deal, Dimension.LEVERAGE, Metric.CUSHION, low=money(1), high=money(12)
+        )
+        assert found.value is not None
+        step = money("0.01")
+        below = Dimension.LEVERAGE.apply(deal, found.value - step)
+        above = Dimension.LEVERAGE.apply(deal, found.value + step)
+        assert below.test_covenants().passes
+        assert not above.test_covenants().passes
+
+    def test_a_target_that_is_never_reached_is_reported_as_absent(self) -> None:
+        found = solve(
+            example(),
+            Dimension.EXIT_MULTIPLE,
+            Metric.MOIC,
+            target=money(50),
+            low=money(2),
+            high=money(20),
+        )
+        assert not found.found
+        assert found.format() == "none"
+        assert "does not cross" in found.note
+
+    def test_an_endpoint_the_engine_cannot_value_is_named(self) -> None:
+        found = solve(
+            example(),
+            Dimension.EXIT_MULTIPLE,
+            Metric.IRR,
+            low=money(1),
+            high=money(20),
+        )
+        assert not found.found
+        assert "cannot be valued at 1.00x" in found.note
+        assert "wiped out" in found.note
+
+    def test_a_target_already_met_at_an_endpoint_is_that_endpoint(self) -> None:
+        deal = example()
+        base = deal.realise().moic
+        assert base is not None
+        found = solve(
+            deal,
+            Dimension.EXIT_MULTIPLE,
+            Metric.MOIC,
+            target=base,
+            low=money("11.0"),
+            high=money(20),
+        )
+        assert found.value == money("11.0")
+
+    def test_a_whole_valued_dimension_is_refused(self) -> None:
+        with pytest.raises(SensitivityError, match="whole values"):
+            solve(
+                example(),
+                Dimension.EXIT_YEAR,
+                Metric.MOIC,
+                target=money(1),
+                low=money(2),
+                high=money(8),
+            )
+
+    def test_a_bracket_that_does_not_bracket_is_refused(self) -> None:
+        with pytest.raises(SensitivityError, match="not a bracket"):
+            solve(
+                example(),
+                Dimension.EXIT_MULTIPLE,
+                Metric.MOIC,
+                low=money(12),
+                high=money(9),
+            )
+
+    def test_the_cushion_needs_covenants(self) -> None:
+        with pytest.raises(SensitivityError, match="describes none"):
+            solve(
+                simple(),
+                Dimension.EXIT_MULTIPLE,
+                Metric.CUSHION,
+                low=money(5),
+                high=money(12),
+            )
+
+    def test_fewer_steps_give_a_wider_answer(self) -> None:
+        deal = example()
+        kwargs = dict(target=money(1), low=money(2), high=money(20))
+        coarse = solve(
+            deal, Dimension.EXIT_MULTIPLE, Metric.MOIC, steps=4, **kwargs
+        )
+        fine = solve(deal, Dimension.EXIT_MULTIPLE, Metric.MOIC, steps=24, **kwargs)
+        assert coarse.value is not None and fine.value is not None
+        # Four halvings of an eighteen-turn bracket cannot do better than about
+        # half a turn, and twenty-four are far inside that.
+        assert abs(coarse.value - fine.value) < money("0.6")
+
+    def test_no_steps_at_all_is_refused(self) -> None:
+        with pytest.raises(SensitivityError, match="at least one step"):
+            solve(
+                example(),
+                Dimension.EXIT_MULTIPLE,
+                Metric.MOIC,
+                low=money(2),
+                high=money(20),
+                steps=0,
+            )

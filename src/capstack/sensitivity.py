@@ -53,6 +53,8 @@ from .spec import Deal
 
 __all__ = [
     "Axis",
+    "Breakeven",
+    "Case",
     "Cell",
     "Dimension",
     "Grid",
@@ -60,6 +62,7 @@ __all__ = [
     "SensitivityError",
     "Unit",
     "format_value",
+    "solve",
 ]
 
 
@@ -307,6 +310,16 @@ class Dimension(Enum):
     def is_shift(self) -> bool:
         """Whether the value is added to the file's assumption or replaces it."""
         return self.unit is Unit.POINTS
+
+    @property
+    def is_continuous(self) -> bool:
+        """Whether values between two points on this dimension mean anything.
+
+        The exit year does not qualify. A hold of four and a half periods is
+        not a deal that could be done, and halving the interval towards one
+        would report a break-even nobody can act on.
+        """
+        return self is not Dimension.EXIT_YEAR
 
     def apply(self, deal: Deal, value: Money) -> Deal:
         """``deal`` as it would be with this dimension set to ``value``."""
@@ -659,6 +672,171 @@ def _cell(
         breach_note=(
             "" if breach is None else f"{breach.covenant} in period {breach.index}"
         ),
+    )
+
+
+
+# -- Break-evens ---------------------------------------------------------
+
+
+#: Halvings of the bracket. Twenty-four takes a ten-turn bracket below a
+#: millionth, which is far past what any of these dimensions is quoted to, and
+#: costs a hundred-odd engine runs rather than the thousands an open-ended
+#: search could.
+BISECTION_STEPS = 24
+
+
+@dataclass(frozen=True, slots=True)
+class Breakeven:
+    """Where a metric crosses a level, along one dimension.
+
+    ``value`` is ``None`` when there is no crossing inside the bracket, and the
+    note says which of the several reasons applied. A break-even that does not
+    exist and a break-even that was not looked for hard enough are different
+    facts about a deal, and a reader is entitled to know which one they have.
+    """
+
+    dimension: Dimension
+    metric: Metric
+    target: Money
+    low: Money
+    high: Money
+    value: Money | None
+    note: str = ""
+
+    @property
+    def found(self) -> bool:
+        return self.value is not None
+
+    def format(self) -> str:
+        if self.value is None:
+            return "none"
+        return format_value(self.dimension.unit, self.value)
+
+
+def solve(
+    deal: Deal,
+    dimension: Dimension,
+    metric: Metric,
+    *,
+    target: Money = ZERO,
+    low: Money,
+    high: Money,
+    steps: int = BISECTION_STEPS,
+) -> Breakeven:
+    """Find where ``metric`` crosses ``target`` as ``dimension`` moves.
+
+    Bisection rather than a secant or a Brent step, and deliberately. Each
+    evaluation rebuilds and re-runs the whole engine, so the function is
+    expensive; more to the point it is not smooth. A cash sweep that steps at a
+    leverage rung and a covenant that starts testing in period two put real
+    discontinuities in these curves, and a method that assumes local linearity
+    will happily extrapolate across one and return a crossing that is not
+    there. Halving an interval assumes nothing but a sign change.
+
+    The bracket is required rather than guessed. An open-ended search over an
+    entry multiple would eventually wander into prices at which the deal does
+    not describe a transaction at all, and a break-even reported from out there
+    is worse than no break-even.
+    """
+    if not dimension.is_continuous:
+        raise SensitivityError(
+            f"{dimension.label.lower()} takes whole values, so a crossing "
+            f"between two of them is not a case anyone could do"
+        )
+    if low >= high:
+        raise SensitivityError(
+            f"the bracket runs from {low} to {high}, which is not a bracket"
+        )
+    if steps < 1:
+        raise SensitivityError("a bisection needs at least one step")
+    if metric.needs_covenants and not deal.has_covenants:
+        raise SensitivityError(
+            f"{metric.label.lower()} is measured against maintenance tests, "
+            f'and this deal describes none; add a "covenants" block'
+        )
+
+    def at(value: Money) -> tuple[Money | None, str]:
+        try:
+            case = Case.run(dimension.apply(deal, value))
+        except CELL_FAILURES as exc:
+            return None, str(exc)
+        reading, note = metric.read(case)
+        return (None, note) if reading is None else (reading - target, "")
+
+    def absent(note: str) -> Breakeven:
+        return Breakeven(
+            dimension=dimension,
+            metric=metric,
+            target=target,
+            low=low,
+            high=high,
+            value=None,
+            note=note,
+        )
+
+    at_low, low_note = at(low)
+    if at_low is None:
+        return absent(
+            f"the case cannot be valued at {format_value(dimension.unit, low)}: "
+            f"{low_note}"
+        )
+    at_high, high_note = at(high)
+    if at_high is None:
+        return absent(
+            f"the case cannot be valued at {format_value(dimension.unit, high)}: "
+            f"{high_note}"
+        )
+    if at_low == 0:
+        return _found(dimension, metric, target, low, high, low)
+    if at_high == 0:
+        return _found(dimension, metric, target, low, high, high)
+    if (at_low > 0) == (at_high > 0):
+        return absent(
+            f"{metric.label.lower()} does not cross "
+            f"{format_value(metric.unit, target)} between "
+            f"{format_value(dimension.unit, low)} and "
+            f"{format_value(dimension.unit, high)}"
+        )
+
+    lo, hi, sign_low = low, high, at_low > 0
+    two = money(2)
+    for _ in range(steps):
+        mid = (lo + hi) / two
+        value, note = at(mid)
+        if value is None:
+            # The engine stopped answering partway into the bracket, which
+            # means the crossing is somewhere in a region the model does not
+            # describe. Reporting the last iterate would dress that up as an
+            # answer.
+            return absent(
+                f"the case cannot be valued at "
+                f"{format_value(dimension.unit, mid)}, inside the bracket: {note}"
+            )
+        if value == 0:
+            return _found(dimension, metric, target, low, high, mid)
+        if (value > 0) == sign_low:
+            lo = mid
+        else:
+            hi = mid
+    return _found(dimension, metric, target, low, high, (lo + hi) / two)
+
+
+def _found(
+    dimension: Dimension,
+    metric: Metric,
+    target: Money,
+    low: Money,
+    high: Money,
+    value: Money,
+) -> Breakeven:
+    return Breakeven(
+        dimension=dimension,
+        metric=metric,
+        target=target,
+        low=low,
+        high=high,
+        value=value,
     )
 
 
