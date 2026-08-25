@@ -50,7 +50,7 @@ would actually read.
 
 ## Phase 7 — Analysis and reporting
 
-- [ ] Two-dimensional sensitivity grids over entry and exit assumptions
+- [x] Two-dimensional sensitivity grids over entry and exit assumptions
 - [ ] Command line over the whole engine
 - [ ] Investment committee report
 - [ ] Worked examples checked into the test suite

@@ -131,6 +131,43 @@ def is_close(a: Money, b: Money, *, tolerance: Numeric = "0.01") -> bool:
     return abs(a - b) <= money(tolerance)
 
 
+def rescale(target: Money, amounts: Sequence[Money]) -> list[Money]:
+    """Resize ``amounts`` so they sum to ``target`` exactly, holding their shape.
+
+    The same idiom as :func:`allocate_pro_rata` and for the same reason — a
+    ratio that does not terminate leaves a residue in the last few decimal
+    places, and a capital structure asked for six turns of leverage that comes
+    back at six turns plus a billionth is a structure whose stated leverage is
+    a lie, however small.
+
+    The difference is direction. An allocator never pays out more than is
+    claimed, which is right for a waterfall and wrong here: resizing a structure
+    has to be able to grow it as well as shrink it.
+
+    Zero amounts stay zero. An undrawn revolver is not a share of the debt to be
+    resized; it is a facility that happens to be at nil, and giving it a balance
+    because the term loan grew would put the business into a drawing it never
+    made.
+    """
+    if target < 0:
+        raise ValueError("cannot resize to a negative total")
+    total = sum(amounts, ZERO)
+    if total <= 0:
+        raise ValueError("there is nothing to resize: the amounts sum to zero")
+    plug = max(i for i, amount in enumerate(amounts) if amount > 0)
+
+    scaled = [ZERO for _ in amounts]
+    remaining = target
+    for i, amount in enumerate(amounts):
+        if i == plug or amount <= 0:
+            continue
+        share = target * amount / total
+        scaled[i] = share
+        remaining -= share
+    scaled[plug] = remaining
+    return scaled
+
+
 def allocate_pro_rata(pot: Money, claims: Sequence[Money]) -> list[Money]:
     """Split ``pot`` across ``claims`` pro rata, exactly and without residue.
 

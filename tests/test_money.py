@@ -2,7 +2,16 @@ from decimal import Decimal
 
 import pytest
 
-from capstack.money import ZERO, is_close, money, quantize, rate, safe_div, to_float
+from capstack.money import (
+    ZERO,
+    is_close,
+    money,
+    quantize,
+    rate,
+    rescale,
+    safe_div,
+    to_float,
+)
 
 
 class TestMoneyConstruction:
@@ -99,3 +108,33 @@ class TestHelpers:
 
     def test_to_float_crosses_the_boundary(self) -> None:
         assert to_float(money("0.25")) == 0.25
+
+
+class TestRescaling:
+    def test_the_total_lands_on_the_target_exactly(self) -> None:
+        # 1850 into 1440 does not terminate, which is the whole point.
+        scaled = rescale(money(1440), [money(0), money(1150), money(450), money(250)])
+        assert sum(scaled) == money(1440)
+
+    def test_shares_are_held_to_within_rounding(self) -> None:
+        amounts = [money(300), money(700)]
+        scaled = rescale(money(500), amounts)
+        assert is_close(scaled[0], money(150), tolerance="0.0000001")
+        assert sum(scaled) == money(500)
+
+    def test_it_can_grow_as_well_as_shrink(self) -> None:
+        assert sum(rescale(money(2000), [money(100), money(900)])) == money(2000)
+
+    def test_a_zero_amount_stays_zero(self) -> None:
+        assert rescale(money(500), [money(0), money(1000)])[0] == 0
+
+    def test_resizing_to_nothing_leaves_nothing(self) -> None:
+        assert rescale(money(0), [money(100), money(900)]) == [money(0), money(0)]
+
+    def test_a_negative_target_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="negative"):
+            rescale(money(-1), [money(100)])
+
+    def test_there_has_to_be_something_to_resize(self) -> None:
+        with pytest.raises(ValueError, match="nothing to resize"):
+            rescale(money(500), [money(0), money(0)])

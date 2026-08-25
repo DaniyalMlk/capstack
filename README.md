@@ -7,16 +7,17 @@ for, how the purchase is funded, what the operating case throws off, how the deb
 gets paid down, whether the covenants hold, and what the sponsor makes on the way
 out.
 
-Status: six layers are in — the numerics (exact money, day counts, period grids,
+Status: seven layers are in — the numerics (exact money, day counts, period grids,
 the return measures), the transaction (entry valuation, a sources and uses table
 that balances, and the opening balance sheet after the recapitalisation), the
 operating case (drivers through to unlevered free cash flow), the capital
 structure (interest, amortisation, a cash sweep by seniority and a revolver that
 runs both ways), the covenants (maintenance tests, headroom measured in EBITDA,
 and a sweep that steps with a leverage grid), and the exit (equity value,
-returns by security through a preferred waterfall, and a value-creation bridge).
-Sensitivity grids and the investment committee report are next; see
-[ROADMAP.md](ROADMAP.md).
+returns by security through a preferred waterfall, and a value-creation bridge),
+and the analysis on top of them (two-dimensional sensitivity, with the whole
+engine rebuilt and re-run at every cell). The investment committee report is
+next; see [ROADMAP.md](ROADMAP.md).
 
 ## Install
 
@@ -288,6 +289,36 @@ reading in the order it prints: the business is worth 1,519 more because it
 earns more, 186 less because the multiple came in, and 100 more because the
 schedule repaid debt out of cash flow — a reminder that in a five-year hold at
 this leverage, deleveraging is a rounding error next to growth.
+
+Two assumptions at a time, with the deal rebuilt and re-run per cell:
+
+```console
+$ capstack sensitivity examples/meridian.json \
+      --rows ebitda-margin:-6,-3,0,3 --columns exit-year:3,4,5,6
+Project Meridian - sensitivity
+==============================
+
+  IRR
+    exit year across, ebitda margin down
+    base case 17.1%, marked *
+
+                  3y        4y       5y*        6y
+    -6pp     -34.7%!   -16.0%!    -6.8%!    -3.8%!
+    -3pp      -3.9%!     3.2%!     6.7%!     7.2%!
+    0pp*      16.0%     17.1%     17.1%     15.8%
+    +3pp      30.6%     27.2%     24.6%     21.9%
+
+    ! a covenant breaches on this case
+    * the assumption the file describes
+```
+
+The marks are the part worth reading. Three hundred basis points off the margin
+still returns 6.7% over the planned hold, and every cell in that row trips a
+maintenance test before it gets there — a return the lenders have the right to
+interrupt is not a return. Axes are written the way they are said: levels as
+levels (`entry-multiple:11,11.5,12`), shifts in percentage points off the file's
+own case (`ebitda-margin:-1.5,0,1.5`). Seven dimensions and seven metrics are
+available; `capstack sensitivity --help` lists them.
 
 ## Test
 
