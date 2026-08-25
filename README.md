@@ -7,7 +7,7 @@ for, how the purchase is funded, what the operating case throws off, how the deb
 gets paid down, whether the covenants hold, and what the sponsor makes on the way
 out.
 
-Status: seven layers are in — the numerics (exact money, day counts, period grids,
+Status: the engine is complete through phase seven — the numerics (exact money, day counts, period grids,
 the return measures), the transaction (entry valuation, a sources and uses table
 that balances, and the opening balance sheet after the recapitalisation), the
 operating case (drivers through to unlevered free cash flow), the capital
@@ -15,9 +15,10 @@ structure (interest, amortisation, a cash sweep by seniority and a revolver that
 runs both ways), the covenants (maintenance tests, headroom measured in EBITDA,
 and a sweep that steps with a leverage grid), and the exit (equity value,
 returns by security through a preferred waterfall, and a value-creation bridge),
-and the analysis on top of them (two-dimensional sensitivity, with the whole
-engine rebuilt and re-run at every cell). The investment committee report is
-next; see [ROADMAP.md](ROADMAP.md).
+and the analysis on top of them (two-dimensional sensitivity with the whole
+engine rebuilt and re-run at every cell, break-evens solved along any
+assumption, and the committee memo that assembles all of it). See
+[ROADMAP.md](ROADMAP.md).
 
 ## Install
 
@@ -320,6 +321,44 @@ levels (`entry-multiple:11,11.5,12`), shifts in percentage points off the file's
 own case (`ebitda-margin:-1.5,0,1.5`). Seven dimensions and seven metrics are
 available; `capstack sensitivity --help` lists them.
 
+And the whole thing as one document:
+
+```console
+$ capstack report examples/meridian.json
+Project Meridian — investment committee (close 2026-06-30)
+==========================================================
+
+  The transaction
+  ---------------
+
+  240.0 of LTM EBITDA at 11.50x, funded at 7.71x of gross debt and 7.46x net
+  of the cash left on the balance sheet.
+  ...
+
+  Where the case stops working
+  ----------------------------
+
+  The sponsor gets its capital back at 7.50x, which is 4.00x below the
+  11.50x paid going in.
+
+    Question                                       Answer
+    --------------------------------------------  -------
+    Exit multiple returning capital and no more     7.50x
+    Exit multiple returning twice capital          10.42x
+    Margin shift tripping the first covenant      -0.35pp
+    Opening leverage tripping the first covenant    7.94x
+```
+
+`--markdown` for anything that has to be pasted somewhere, `--json` for
+anything that would rather lay the memo out itself, and `--no-breakevens` to
+skip the last section, which is the expensive part.
+
+That last section is the reason the report exists. Everything above it restates
+the base case, which is the one thing the reader already believes. The
+break-evens say where it stops: this structure has 4.00x of room on the exit
+multiple and 35 basis points of room on margin before a lender has a right to
+accelerate, and those two facts are what the meeting is actually about.
+
 ## Test
 
 ```bash
@@ -482,6 +521,30 @@ covenant conversation ahead of it. One that ends below zero has an unpaid bill.
 The model reports them separately, and plugs only the second — notionally, and
 by name — so the periods after it stay readable instead of compounding a deficit
 that has already been reported.
+
+**Break-evens are bisected, not extrapolated.** Each evaluation rebuilds and
+re-runs the whole engine, so the function being solved is expensive — but more
+to the point it is not smooth. A cash sweep that steps at a leverage rung and a
+covenant that starts testing in period two put real discontinuities in these
+curves, and a secant or Brent step assuming local linearity will extrapolate
+across one and return a crossing that is not there. Halving an interval assumes
+nothing but a sign change. The bracket is required rather than guessed, because
+an open-ended search over an entry multiple eventually wanders into prices at
+which the deal does not describe a transaction at all.
+
+**A sensitivity cell is the whole engine, not a gradient.** Raising the entry
+multiple raises the price, which the funding table absorbs into the sponsor
+cheque, which changes the capital every multiple in the column is measured
+against — and, since the debt did not move, changes opening leverage and so the
+sweep step and so the debt outstanding at exit. Lowering the *exit* multiple
+touches the last period and nothing upstream. A linearisation reports the two as
+mirror images; they are not, and the deals that get done live in that gap.
+
+**Equity is described rather than measured.** A security funded as a share of
+the sponsor cheque keeps the description, not the amount. The sponsor's
+contribution is the plug that balances the funding table, so it moves whenever
+anything else does, and a stack that remembered the amount would report every
+multiple in a sensitivity column against the base case's denominator.
 
 **Debt is carried at face, not at proceeds.** A tranche placed at 99.5 raises
 99.5 and owes 100. The half-point is a use of funds. Carrying the tranche at

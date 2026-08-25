@@ -17,7 +17,7 @@ import pytest
 
 from capstack.cli import main
 from capstack.money import money, quantize
-from capstack.report import Report, Table, prepare
+from capstack.report import Table, prepare
 from capstack.sensitivity import Case, Dimension, Metric, solve
 from capstack.spec import Deal, load_deal, parse_deal
 

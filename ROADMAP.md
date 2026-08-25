@@ -51,6 +51,26 @@ would actually read.
 ## Phase 7 — Analysis and reporting
 
 - [x] Two-dimensional sensitivity grids over entry and exit assumptions
-- [ ] Command line over the whole engine
-- [ ] Investment committee report
-- [ ] Worked examples checked into the test suite
+- [x] Command line over the whole engine
+- [x] Investment committee report
+- [x] Break-evens: where the case stops clearing its tests
+- [x] Worked examples checked into the test suite
+
+## Phase 8 — The rest of the equity, and the things that happen during a hold
+
+The first seven phases assume a deal is done once, held flat and sold once. Most
+are not. The next layer is the events that happen in between, and the parts of
+the equity that only exist because somebody has to be paid to run the business.
+
+- [ ] Management incentive plan: an option pool, its strike, and the dilution it
+      lands on the common at exit
+- [ ] A ratchet, so the pool's share of the residual steps with the sponsor's
+      own return rather than sitting flat
+- [ ] Dividend recapitalisation mid-hold: a distribution funded by new debt, and
+      the effect on the return of getting paid early
+- [ ] Add-on acquisitions: a purchase during the hold, funded from cash or from
+      an incremental facility, and its effect on the blended entry multiple
+- [ ] Refinancing an existing tranche, including the call premium and the
+      unamortised financing fees written off
+- [ ] A stub period at close, so a deal signing in November is not modelled as
+      though it closed on the first day of the year
