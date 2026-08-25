@@ -58,6 +58,7 @@ from .sensitivity import (
     Unit,
     solve,
 )
+from .report import Report, Section
 from .returns import (
     AmbiguousIRR,
     CashFlow,
@@ -134,6 +135,8 @@ __all__ = [
     "Period",
     "PeriodGrid",
     "PurchaseAccounting",
+    "Report",
+    "Section",
     "Security",
     "SecurityKind",
     "SecurityOutcome",

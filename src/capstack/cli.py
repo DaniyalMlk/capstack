@@ -17,6 +17,7 @@ from typing import Any, Sequence
 from .covenants import CovenantObservation
 from .daycount import DayCount
 from .money import quantize
+from .report import Report, prepare
 from .returns import AmbiguousIRR, CashFlow, CashFlowStream, IRRError
 from .sensitivity import Axis, Grid, Metric, SensitivityError, format_value
 from .spec import Deal, DealSpecError, load_deal
@@ -1037,6 +1038,50 @@ def _cmd_sensitivity(args: argparse.Namespace) -> int:
     return 0
 
 
+# -- The memo ------------------------------------------------------------
+
+
+def _report_document(report: Report) -> dict[str, Any]:
+    """The memo as data, for anything that would rather lay it out itself."""
+    return {
+        "name": report.name,
+        "close_date": report.close.isoformat() if report.close else None,
+        "title": report.title,
+        "sections": [
+            {
+                "title": section.title,
+                "summary": section.summary,
+                "lines": [
+                    {"label": line.label, "value": line.value, "note": line.note}
+                    for line in section.lines
+                ],
+                "table": (
+                    None
+                    if section.table is None
+                    else {
+                        "headings": list(section.table.headings),
+                        "rows": [list(row) for row in section.table.rows],
+                        "align": list(section.table.alignment),
+                    }
+                ),
+                "notes": list(section.notes),
+            }
+            for section in report
+        ],
+    }
+
+
+def _cmd_report(args: argparse.Namespace) -> int:
+    report = prepare(load_deal(args.file), breakevens=not args.no_breakevens)
+    if args.json:
+        print(json.dumps(_report_document(report), indent=2))
+    elif args.markdown:
+        print(report.as_markdown(), end="")
+    else:
+        print(report.as_text(), end="")
+    return 0
+
+
 def _cmd_exit(args: argparse.Namespace) -> int:
     deal = load_deal(args.file)
     report = _exit_report(deal)
@@ -1203,6 +1248,32 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sensitivity.add_argument("--json", action="store_true", help="emit JSON instead of a table")
     sensitivity.set_defaults(handler=_cmd_sensitivity)
+
+    report = sub.add_parser(
+        "report",
+        help="the whole deal as one memo, including where the case stops working",
+        description=(
+            "Assemble every layer into one document: the transaction, the "
+            "operating case, the debt schedule, the covenants, the exit and "
+            "the value bridge, followed by the break-evens - the exit multiple "
+            "that returns capital and no more, and the assumptions at which "
+            "the first covenant trips."
+        ),
+    )
+    report.add_argument("file", help="path to a deal file (JSON)")
+    output = report.add_mutually_exclusive_group()
+    output.add_argument(
+        "--markdown", action="store_true", help="emit markdown instead of aligned text"
+    )
+    output.add_argument(
+        "--json", action="store_true", help="emit the memo as structured data"
+    )
+    report.add_argument(
+        "--no-breakevens",
+        action="store_true",
+        help="skip the break-evens, which are the expensive part",
+    )
+    report.set_defaults(handler=_cmd_report)
 
     return parser
 
