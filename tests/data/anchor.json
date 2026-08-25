@@ -1,0 +1,61 @@
+{
+  "name": "Project Anchor",
+  "close_date": "2026-06-30",
+  "entry": {
+    "ltm_ebitda": 100.0,
+    "multiple": 10.0,
+    "existing_debt": 200.0,
+    "existing_cash": 50.0
+  },
+  "debt": [
+    {
+      "name": "Senior notes",
+      "kind": "notes",
+      "face": 400.0,
+      "issue_price": 1.0,
+      "financing_fee_rate": 0.02,
+      "cash_rate": 0.06,
+      "amortisation": 0.05,
+      "swept": true
+    },
+    {
+      "name": "Mezzanine",
+      "kind": "mezzanine",
+      "face": 200.0,
+      "issue_price": 0.95,
+      "financing_fee_rate": 0.0,
+      "cash_rate": 0.05,
+      "pik_rate": 0.03
+    }
+  ],
+  "rollover_equity": 60.0,
+  "cash_from_balance_sheet": 50.0,
+  "cash_to_balance_sheet": 40.0,
+  "transaction_fee_rate": 0.01,
+  "structure": {
+    "minimum_cash": 30.0,
+    "sweep_rate": 1.0,
+    "day_count": "30/360 US",
+    "interest_basis": "opening"
+  },
+  "projection": {
+    "years": 2,
+    "frequency": "annual"
+  },
+  "operating": {
+    "opening_revenue": 500.0,
+    "revenue_growth": 0.1,
+    "ebitda_margin": 0.25,
+    "da_rate": 0.04,
+    "capex_rate": 0.05,
+    "nwc_rate": 0.1,
+    "tax_rate": 0.25
+  },
+  "exit": {
+    "multiple": 9.0,
+    "equity": [
+      {"name": "Sponsor equity", "of": "sponsor", "ownership": 0.85},
+      {"name": "Rollover equity", "of": "rollover", "ownership": 0.15}
+    ]
+  }
+}
