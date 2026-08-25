@@ -269,12 +269,17 @@ class Deal:
             + self.transaction.cash_to_balance_sheet
         )
 
-    def schedule(self) -> DebtSchedule:
+    def schedule(self, model: OperatingModel | None = None) -> DebtSchedule:
         """Run the capital structure against the operating case.
 
         Needs both: a structure with nothing to service is not a schedule, and
         an operating case with no structure is the projection that already
         exists one layer down.
+
+        ``model`` is taken rather than run again when the caller already has it.
+        A schedule solves a fixed point and a caller running the same deal many
+        times over — a sensitivity grid, say — should pay for that once per
+        case rather than once per question asked of it.
         """
         if self.structure is None:
             raise DealSpecError(
@@ -283,7 +288,7 @@ class Deal:
             )
         return DebtSchedule.from_operating_model(
             self.structure,
-            self.project(),
+            self.project() if model is None else model,
             opening_cash=self.opening_cash if self.opening_cash is not None else self.cash_at_close,
             # The certificate that sets the first period's sweep step was signed
             # on the LTM figure the deal was priced on, not on a projection.
@@ -294,7 +299,11 @@ class Deal:
     def has_covenants(self) -> bool:
         return bool(self.covenants)
 
-    def test_covenants(self) -> CovenantReport:
+    def test_covenants(
+        self,
+        model: OperatingModel | None = None,
+        schedule: DebtSchedule | None = None,
+    ) -> CovenantReport:
         """Run the described covenants against the schedule and the case.
 
         Raises if the file described none rather than reporting a structure with
@@ -305,9 +314,15 @@ class Deal:
                 'this deal has no covenants; add a "covenants" block describing '
                 "the maintenance tests"
             )
-        return CovenantReport.test(self.covenants, self.schedule(), self.project())
+        case = self.project() if model is None else model
+        run = self.schedule(case) if schedule is None else schedule
+        return CovenantReport.test(self.covenants, run, case)
 
-    def realise(self) -> Outcome:
+    def realise(
+        self,
+        model: OperatingModel | None = None,
+        schedule: DebtSchedule | None = None,
+    ) -> Outcome:
         """Value the exit and run the equity through it.
 
         Needs a close date as well as a schedule, because a rate of return is
@@ -318,11 +333,13 @@ class Deal:
             raise DealSpecError(
                 "an exit is measured from close, so a close date is required"
             )
+        case = self.project() if model is None else model
+        run = self.schedule(case) if schedule is None else schedule
         try:
             return Outcome.realise(
                 self.transaction,
-                self.project(),
-                self.schedule(),
+                case,
+                run,
                 entry_date=self.close_date,
                 exit_multiple=self.exit_multiple,
                 exit_fee_rate=self.exit_fee_rate,
