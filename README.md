@@ -7,7 +7,9 @@ for, how the purchase is funded, what the operating case throws off, how the deb
 gets paid down, whether the covenants hold, and what the sponsor makes on the way
 out.
 
-Status: the engine is complete through phase seven — the numerics (exact money, day counts, period grids,
+Status: the engine is complete through phase seven, and phase eight — the
+things that happen between buying a business and selling it — is under way. What
+is there: the numerics (exact money, day counts, period grids,
 the return measures), the transaction (entry valuation, a sources and uses table
 that balances, and the opening balance sheet after the recapitalisation), the
 operating case (drivers through to unlevered free cash flow), the capital
@@ -17,8 +19,10 @@ and a sweep that steps with a leverage grid), and the exit (equity value,
 returns by security through a preferred waterfall, and a value-creation bridge),
 and the analysis on top of them (two-dimensional sensitivity with the whole
 engine rebuilt and re-run at every cell, break-evens solved along any
-assumption, and the committee memo that assembles all of it). See
-[ROADMAP.md](ROADMAP.md).
+assumption, and the committee memo that assembles all of it), together with the
+management incentive plan that sits between the preferred and the common — an
+option pool with a strike, a vesting schedule, and a ratchet that steps with the
+sponsor's own return. See [ROADMAP.md](ROADMAP.md).
 
 ## Install
 
@@ -291,6 +295,40 @@ earns more, 186 less because the multiple came in, and 100 more because the
 schedule repaid debt out of cash flow — a reminder that in a five-year hold at
 this leverage, deleveraging is a rounding error next to growth.
 
+Management get paid too, and the plan that pays them comes out of the common:
+
+```console
+$ capstack exit examples/kestrel.json
+Project Kestrel - exit
+======================
+  ...
+  Equity
+                              invested     proceeds         MoIC          IRR
+    Sponsor equity              407.62       936.50        2.30x        18.1%
+    Management rollover          24.00       139.94        5.83x        42.3%
+    -------------------------------------------------------------------------
+    Total                       431.62     1,076.43        2.49x        20.0%
+    over 5.00 years
+
+  Management incentive plan
+    Vested                           100.0%
+    Share of the pot                   5.7%
+    Residual before the plan        1,093.28
+    Strike paid in                     47.96
+    Pot divided                     1,141.24
+    Entitlement                        64.81
+    Paid to management                 16.85
+    What management are paid is what the common give up, to the penny.
+```
+
+Kestrel's pool is 10% of the fully diluted equity, struck at what the equity was
+worth on the day it closed, on a ratchet that pays 5% of the pot up to a 2.0x
+sponsor return and 10% above it. The sponsor lands on 2.30x, so the second band
+is partly in play and the blended take is 5.7% — a number that is not any of the
+inputs. Every return above it is quoted net of the plan, which is the only
+version worth quoting: a sponsor multiple struck before management are paid is a
+multiple on money somebody else receives.
+
 Two assumptions at a time, with the deal rebuilt and re-run per cell:
 
 ```console
@@ -412,6 +450,45 @@ A fair-value step-up in a stock deal comes with a deferred tax liability, becaus
 book depreciation rises and tax depreciation does not. Recognising the step-up
 without the liability overstates equity by the tax on it. In the shipped example,
 180 of step-up at 25% moves only 135 out of goodwill, not 180.
+
+**A ratchet is written as marginal bands, because the obvious reading is
+circular.** A management pool that steps up as the sponsor clears hurdles is the
+common structure and the awkward one to model: the pool's share depends on the
+sponsor's return, and the sponsor's return depends on the pool's share. Models
+that write down the circle either iterate to whatever they converge on, or test
+the hurdle on a pre-dilution figure and leave the reader to discover that 2.0x
+meant 2.1x before management were paid.
+
+`capstack` writes the ratchet the way a well-drafted one reads: a *marginal*
+share of the proceeds in each band above a hurdle, rather than a higher share of
+everything once the hurdle is cleared. That makes the sponsor's post-ratchet
+proceeds continuous and strictly increasing in the sale price, so each band's
+boundary can be solved in closed form from the band below it — no iteration, and
+the hurdles mean what they say. There is a test that re-derives the first
+boundary from a finished deal and asserts the sponsor lands on exactly 2.0x
+there.
+
+The retroactive alternative is a real structure and it is deliberately not
+modelled. It is discontinuous: a penny more of enterprise value can leave the
+sponsor with less money than it had a penny earlier, and a solver asked where
+the hurdle binds has to choose between two answers on either side of a cliff.
+
+**An option pool is settled by the treasury method, and struck at cost means
+struck at cost.** The exercise proceeds join the pot before the pot is divided,
+so a pool holding a tenth of the fully diluted equity does not hold a tenth of
+the residual — it holds a tenth of the residual plus its own strike, less the
+strike. Below the point where those two are equal the options lapse: management
+are paid nothing and the common are not diluted at all.
+
+The strike itself is described as a multiple of the equity value at close rather
+than as an amount, so it moves with the entry multiple across a sensitivity grid
+instead of pricing every column against the base case. The gross-up in that
+derivation is easy to get wrong and worth stating: the existing holders' cheque
+buys them the share of the company the pool does *not* hold, so the fully diluted
+value at close is that cheque divided by one less the pool's share. Struck there,
+a plan is exactly at the money on a deal that creates no value. The naive
+derivation — the pool's share times the cheque — pays management something on a
+deal that created nothing, which is not what anyone signing it believed.
 
 **Working capital reaches cash flow as a movement, not a level.** A business
 growing at 8% with working capital steady at 15% of revenue consumes cash every

@@ -62,9 +62,9 @@ The first seven phases assume a deal is done once, held flat and sold once. Most
 are not. The next layer is the events that happen in between, and the parts of
 the equity that only exist because somebody has to be paid to run the business.
 
-- [ ] Management incentive plan: an option pool, its strike, and the dilution it
+- [x] Management incentive plan: an option pool, its strike, and the dilution it
       lands on the common at exit
-- [ ] A ratchet, so the pool's share of the residual steps with the sponsor's
+- [x] A ratchet, so the pool's share of the residual steps with the sponsor's
       own return rather than sitting flat
 - [ ] Dividend recapitalisation mid-hold: a distribution funded by new debt, and
       the effect on the return of getting paid early
