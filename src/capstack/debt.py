@@ -35,12 +35,18 @@ the loop by accruing on the opening balance and calling the difference small.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum
 
 from .daycount import DayCount
 from .drivers import Driver
+from .events import (
+    Recapitalisation,
+    RecapitalisationError,
+    RecapitalisationOutcome,
+)
 from .money import (
     ONE,
     ZERO,
@@ -575,6 +581,7 @@ class TranchePeriod:
     mandatory_repayment: Money
     sweep_repayment: Money
     closing: Money
+    recapitalisation: Money = ZERO
 
     @property
     def total_repayment(self) -> Money:
@@ -599,6 +606,7 @@ class TranchePeriod:
             + self.pik_interest
             - self.mandatory_repayment
             - self.sweep_repayment
+            + self.recapitalisation
         )
         return is_close(self.closing, expected, tolerance=tolerance)
 
@@ -621,6 +629,8 @@ class DebtPeriod:
     damping_used: Money = ONE
     sweep_rate: Money = ONE
     certified_leverage: Money | None = None
+    distribution: Money = ZERO
+    distribution_from_cash: Money = ZERO
 
     @property
     def index(self) -> int:
@@ -665,6 +675,11 @@ class DebtPeriod:
         return self.mandatory_repayment + self.sweep_repayment
 
     @property
+    def recapitalisation(self) -> Money:
+        """Incremental face taken down at the end of this period."""
+        return sum((t.recapitalisation for t in self.tranches), ZERO)
+
+    @property
     def cash_cost_of_debt(self) -> Money:
         """Everything the capital structure took in cash this period."""
         return self.cash_interest + self.undrawn_fees
@@ -702,8 +717,110 @@ class DebtPeriod:
             - self.total_repayment
             + self.revolver_draw
             + self.funding_shortfall
+            - self.distribution_from_cash
         )
         return is_close(self.closing_cash, expected, tolerance=tolerance)
+
+
+def _by_period(
+    events: Sequence[Recapitalisation], structure: CapitalStructure, span: int
+) -> dict[int, Recapitalisation]:
+    """Index the events by the period they land in, checking each one is possible.
+
+    Everything checkable without running the schedule is checked here, so a
+    structure that cannot support the event fails before twenty periods of
+    arithmetic rather than in the middle of them.
+    """
+    known = {t.name for t in structure.tranches}
+    scheduled: dict[int, Recapitalisation] = {}
+    for event in events:
+        if event.period > span:
+            raise RecapitalisationError(
+                f"{event.label}: period {event.period} is beyond the {span} "
+                f"periods the schedule covers"
+            )
+        if event.period in scheduled:
+            raise RecapitalisationError(
+                f"two recapitalisations land at the end of period {event.period}; "
+                f"combine them into one"
+            )
+        for draw in event.draws:
+            if draw.tranche not in known:
+                raise RecapitalisationError(
+                    f"{event.label}: there is no tranche named {draw.tranche!r} to "
+                    f"draw on; the structure holds "
+                    f"{', '.join(repr(n) for n in sorted(known))}"
+                )
+            tranche = structure.tranche(draw.tranche)
+            if tranche.has_matured(event.period - 1):
+                raise RecapitalisationError(
+                    f"{event.label}: {draw.tranche} has matured by period "
+                    f"{event.period}, so there is nothing left to draw on it"
+                )
+        scheduled[event.period] = event
+    return scheduled
+
+
+def _recapitalise(
+    structure: CapitalStructure,
+    row: DebtPeriod,
+    event: Recapitalisation,
+    *,
+    index: int,
+    earnings: Money | None,
+) -> tuple[DebtPeriod, RecapitalisationOutcome]:
+    """Apply a recapitalisation at the end of a solved period.
+
+    Placed after the period rather than inside it, which is what makes the event
+    cost a period's less interest than a mid-period raise would. The new balance
+    is what the following period opens on, so everything downstream — interest,
+    the sweep, the covenant tests — picks it up without being told about the
+    event at all.
+
+    Cash taken off the balance sheet is refused rather than clamped when it would
+    leave the structure below the minimum it is required to hold. A model that
+    quietly paid a smaller dividend than the file described would answer a
+    question nobody asked.
+    """
+    available = row.closing_cash - structure.minimum_cash
+    if event.from_cash > available:
+        raise RecapitalisationError(
+            f"{event.label}: takes {event.from_cash} off a balance sheet holding "
+            f"{row.closing_cash} against a minimum of {structure.minimum_cash}, "
+            f"which leaves only {available} to pay out"
+        )
+
+    before = _leverage(row.closing_debt, row.closing_cash, earnings)
+    tranches = tuple(
+        dataclasses.replace(
+            t,
+            recapitalisation=event.draw_on(t.name),
+            closing=t.closing + event.draw_on(t.name),
+        )
+        for t in row.tranches
+    )
+    cash_after = row.closing_cash - event.from_cash
+    updated = dataclasses.replace(
+        row,
+        tranches=tranches,
+        closing_cash=cash_after,
+        distribution=event.distribution,
+        distribution_from_cash=event.from_cash,
+    )
+    return updated, RecapitalisationOutcome(
+        event=event,
+        index=index,
+        cash_before=row.closing_cash,
+        cash_after=cash_after,
+        leverage_before=before,
+        leverage_after=_leverage(updated.closing_debt, cash_after, earnings),
+    )
+
+
+def _leverage(debt: Money, cash: Money, earnings: Money | None) -> Money | None:
+    if earnings is None or earnings <= 0:
+        return None
+    return (debt - cash) / earnings
 
 
 @dataclass(frozen=True, slots=True)
@@ -713,6 +830,7 @@ class DebtSchedule:
     structure: CapitalStructure
     periods: tuple[DebtPeriod, ...]
     opening_cash: Money
+    recapitalisations: tuple[RecapitalisationOutcome, ...] = ()
 
     def __len__(self) -> int:
         return len(self.periods)
@@ -733,6 +851,7 @@ class DebtSchedule:
         opening_cash: Numeric = 0,
         ebitda: Sequence[Numeric] | None = None,
         opening_ebitda: Numeric | None = None,
+        recapitalisations: Sequence[Recapitalisation] = (),
     ) -> DebtSchedule:
         """Roll the structure forward, one period at a time.
 
@@ -764,12 +883,15 @@ class DebtSchedule:
                 f"{len(periods)} periods against {len(ebitda)} EBITDA figures"
             )
 
+        scheduled = _by_period(recapitalisations or (), structure, len(periods))
+
         balances = {t.name: t.face for t in structure.tranches}
         cash = money(opening_cash)
         if cash < 0:
             raise ValueError("opening cash must not be negative")
 
         rows: list[DebtPeriod] = []
+        applied_events: list[RecapitalisationOutcome] = []
         for i, period in enumerate(periods):
             certified: Money | None = None
             rate = structure.sweep_rate
@@ -799,11 +921,27 @@ class DebtSchedule:
                 sweep_rate=rate,
                 certified_leverage=certified,
             )
+            event = scheduled.get(period.index)
+            if event is not None:
+                row, applied = _recapitalise(
+                    structure,
+                    row,
+                    event,
+                    index=i,
+                    earnings=money(ebitda[i]) if ebitda is not None else None,
+                )
+                applied_events.append(applied)
+
             rows.append(row)
             balances = {t.name: t.closing for t in row.tranches}
             cash = row.closing_cash
 
-        return cls(structure=structure, periods=tuple(rows), opening_cash=money(opening_cash))
+        return cls(
+            structure=structure,
+            periods=tuple(rows),
+            opening_cash=money(opening_cash),
+            recapitalisations=tuple(applied_events),
+        )
 
     @classmethod
     def from_operating_model(
@@ -813,6 +951,7 @@ class DebtSchedule:
         *,
         opening_cash: Numeric = 0,
         opening_ebitda: Numeric | None = None,
+        recapitalisations: Sequence[Recapitalisation] = (),
     ) -> DebtSchedule:
         """Run the structure against an operating case."""
         return cls.run(
@@ -822,6 +961,7 @@ class DebtSchedule:
             opening_cash=opening_cash,
             ebitda=[p.ebitda for p in model],
             opening_ebitda=opening_ebitda,
+            recapitalisations=recapitalisations,
         )
 
     # -- Aggregates ------------------------------------------------------
@@ -846,6 +986,28 @@ class DebtSchedule:
     @property
     def total_drawn(self) -> Money:
         return sum((p.revolver_draw for p in self.periods), ZERO)
+
+    @property
+    def total_recapitalised(self) -> Money:
+        """Incremental face raised across the hold, outside the revolver."""
+        return sum((p.recapitalisation for p in self.periods), ZERO)
+
+    @property
+    def total_distributed(self) -> Money:
+        """Cash paid out to the equity during the hold."""
+        return sum((p.distribution for p in self.periods), ZERO)
+
+    def distributions(self) -> tuple[tuple[Period, Money], ...]:
+        """Every interim distribution, with the date it was paid.
+
+        The dates are what make this useful rather than the amounts: an interim
+        distribution is worth what it is worth because of when it arrives, and a
+        return measured without the date is a return that cannot see the point
+        of the exercise.
+        """
+        return tuple(
+            (p.period, p.distribution) for p in self.periods if p.distribution > 0
+        )
 
     @property
     def opening_debt(self) -> Money:

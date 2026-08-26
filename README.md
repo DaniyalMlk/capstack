@@ -22,7 +22,9 @@ engine rebuilt and re-run at every cell, break-evens solved along any
 assumption, and the committee memo that assembles all of it), together with the
 management incentive plan that sits between the preferred and the common — an
 option pool with a strike, a vesting schedule, and a ratchet that steps with the
-sponsor's own return. See [ROADMAP.md](ROADMAP.md).
+sponsor's own return — and the dividend recapitalisation, which raises debt
+part-way through a hold and pays it straight out to the shareholders. See
+[ROADMAP.md](ROADMAP.md).
 
 ## Install
 
@@ -329,6 +331,44 @@ inputs. Every return above it is quoted net of the plan, which is the only
 version worth quoting: a sponsor multiple struck before management are paid is a
 multiple on money somebody else receives.
 
+Not every deal is bought once and sold once. Kestrel raises 80 of incremental
+debt at the end of the third year and pays the proceeds out:
+
+```console
+$ capstack report examples/kestrel.json
+  ...
+  Paid during the hold
+  --------------------
+
+  98.2 reached the equity before the exit, funded by 80.0 of new debt. The
+  money multiple moves -0.02x and the rate of return moves +0.8pp: the same
+  money, banked earlier, less what the debt cost to carry.
+
+    Distributed during the hold   98.2
+    Incremental face raised       80.0
+    Cost of raising it             1.8   fees and issue discount
+    Money multiple, as run       2.47x
+    Money multiple, held flat    2.49x
+    Rate of return, as run       20.9%
+    Rate of return, held flat    20.0%
+
+    Date        Payment                 Amount  Years  Preferred  Common
+    ----------  ----------------------  ------  -----  ---------  ------
+    2029-09-30  Distribution, period 3    98.2   3.00        0.0    98.2
+
+    Dividend recapitalisation put 0.84x of leverage back on, taking net debt
+    from 3.13x to 3.97x of EBITDA.
+```
+
+The four figures in the middle are the point. Nothing about the business
+changed — same earnings, same multiple, same buyer — and the two measures
+disagree about whether anything happened. The multiple falls slightly, because
+the new debt costs interest for two years and the fees were real. The rate rises,
+because it is the only measure that knows the sponsor had the money in 2029
+rather than 2031. The "held flat" rows are the same deal run a second time with
+the event stripped out, which is the only way to say what the event was worth
+rather than merely that it occurred.
+
 Two assumptions at a time, with the deal rebuilt and re-run per cell:
 
 ```console
@@ -450,6 +490,26 @@ A fair-value step-up in a stock deal comes with a deferred tax liability, becaus
 book depreciation rises and tax depreciation does not. Recognising the step-up
 without the liability overstates equity by the tax on it. In the shipped example,
 180 of step-up at 25% moves only 135 out of goodwill, not 180.
+
+**A preferred paid down early accrues on what is left.** Once a deal can pay
+its shareholders more than once, a preferred claim stops being "the cheque plus
+a hold's worth of coupon". A distribution meets the accrued return first and
+capital second — which is the ordinary waterfall ordering, and the thing that
+makes "how much capital is still outstanding" answerable at all after a partial
+repayment. The remaining capital is what the coupon runs on from there.
+
+Charging the coupon on the original cheque after part of it has been repaid
+overstates the preferred's claim at exit and understates everything ranking
+behind it, which on a structure with preferred ahead of common is a transfer
+between two holders who both read the model.
+
+**A recapitalisation is reported against the deal without it.** Interest and
+fees mean the money multiple falls slightly and the rate of return rises
+materially: the same money, banked earlier, less what the debt cost to carry.
+Reported on its own, that says the sponsor received some money early. Reported
+against the same deal run a second time with the event stripped out, it says
+what the event was worth. The second run costs a full pass of the engine and is
+worth it, because the counterfactual is the entire content of the claim.
 
 **A ratchet is written as marginal bands, because the obvious reading is
 circular.** A management pool that steps up as the sponsor clears hurdles is the

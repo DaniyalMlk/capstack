@@ -66,7 +66,7 @@ the equity that only exist because somebody has to be paid to run the business.
       lands on the common at exit
 - [x] A ratchet, so the pool's share of the residual steps with the sponsor's
       own return rather than sitting flat
-- [ ] Dividend recapitalisation mid-hold: a distribution funded by new debt, and
+- [x] Dividend recapitalisation mid-hold: a distribution funded by new debt, and
       the effect on the return of getting paid early
 - [ ] Add-on acquisitions: a purchase during the hold, funded from cash or from
       an incremental facility, and its effect on the blended entry multiple

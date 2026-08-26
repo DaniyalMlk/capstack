@@ -27,6 +27,7 @@ model that renders one has overstepped.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import date
@@ -162,6 +163,8 @@ def prepare(deal: Deal, *, breakevens: bool = True) -> Report:
     if case.covenants is not None:
         sections.append(_covenants(case.covenants))
     sections.append(_exit(case.outcome))
+    if case.outcome.was_recapitalised:
+        sections.append(_recapitalisation(deal, case))
     if case.outcome.incentive is not None:
         sections.append(_incentive(case.outcome.incentive))
     sections.append(_bridge(case.outcome))
@@ -526,6 +529,97 @@ def _exit(outcome: Outcome) -> Section:
         ),
         notes=tuple(notes),
     )
+
+
+def _recapitalisation(deal: Deal, case: Case) -> Section:
+    """What was paid out mid-hold, what it cost, and which measure noticed.
+
+    The counterfactual costs a second run of the whole engine and is worth it.
+    A recapitalisation reported on its own says the sponsor received some money
+    early; reported against the same deal without it, it says what that was
+    worth — and the two measures disagree in the direction that explains why
+    anybody does this.
+    """
+    outcome = case.outcome
+    schedule = case.schedule
+
+    flat = Case.run(dataclasses.replace(deal, recapitalisations=()))
+    moved_moic = _delta_multiple(outcome.moic, flat.outcome.moic)
+    moved_irr = _delta_rate(outcome.irr, flat.outcome.irr)
+
+    rows = tuple(
+        (
+            d.when.isoformat(),
+            d.label,
+            _amount(d.amount),
+            f"{quantize(d.years, 2)}",
+            _amount(d.to_preferred),
+            _amount(d.to_common),
+        )
+        for d in outcome.distributions
+    )
+
+    lines = [
+        Line("Distributed during the hold", _amount(outcome.interim)),
+        Line("Incremental face raised", _amount(schedule.total_recapitalised)),
+        Line(
+            "Cost of raising it",
+            _amount(sum((e.cost_of_raising for e in schedule.recapitalisations), ZERO)),
+            "fees and issue discount",
+        ),
+        Line("Money multiple, as run", _multiple(outcome.moic)),
+        Line("Money multiple, held flat", _multiple(flat.outcome.moic)),
+        Line("Rate of return, as run", _rate(outcome.irr)),
+        Line("Rate of return, held flat", _rate(flat.outcome.irr)),
+    ]
+
+    notes = []
+    for event in schedule.recapitalisations:
+        before, after = event.leverage_before, event.leverage_after
+        if event.turns_added is not None and before is not None and after is not None:
+            notes.append(
+                f"{event.label} put {_turns(event.turns_added)} of leverage back "
+                f"on, taking net debt from {_turns(before)} to {_turns(after)} of "
+                f"EBITDA."
+            )
+    notes.append(
+        "The plan settles against the exit alone. An interim distribution goes "
+        "to the securities rather than being shared with the pool, though what "
+        "the holders it watches have already received does count towards a "
+        "ratchet hurdle."
+    )
+
+    return Section(
+        title="Paid during the hold",
+        summary=(
+            f"{_amount(outcome.interim)} reached the equity before the exit, "
+            f"funded by {_amount(schedule.total_recapitalised)} of new debt. The "
+            f"money multiple moves {moved_moic} and the rate of return moves "
+            f"{moved_irr}: the same money, banked earlier, less what the debt "
+            f"cost to carry."
+        ),
+        lines=tuple(lines),
+        table=Table(
+            headings=("Date", "Payment", "Amount", "Years", "Preferred", "Common"),
+            rows=rows,
+            align=("l", "l", "r", "r", "r", "r"),
+        ),
+        notes=tuple(notes),
+    )
+
+
+def _delta_multiple(actual: Money | None, flat: Money | None) -> str:
+    if actual is None or flat is None:
+        return _NONE
+    change = actual - flat
+    return f"{'+' if change >= 0 else ''}{quantize(change, 2)}x"
+
+
+def _delta_rate(actual: float | None, flat: float | None) -> str:
+    if actual is None or flat is None:
+        return _NONE
+    change = actual - flat
+    return f"{'+' if change >= 0 else ''}{change * 100:.1f}pp"
 
 
 def _incentive(settled: PoolOutcome) -> Section:

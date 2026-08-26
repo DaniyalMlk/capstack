@@ -52,6 +52,7 @@ from .transaction import Transaction
 
 __all__ = [
     "Attribution",
+    "Distribution",
     "ExitValuation",
     "Outcome",
     "Security",
@@ -149,17 +150,34 @@ class Security:
         number of periods, so a deal exited eleven days late is worth eleven
         days more to the preferred, which is what the document says.
         """
+        return self.accrue(
+            capital=self.invested, accrued=ZERO, years=years
+        )
+
+    def accrue(self, *, capital: Money, accrued: Money, years: Money) -> Money:
+        """What accrues over ``years`` on a claim standing at ``capital`` plus ``accrued``.
+
+        Split out from :meth:`accrued_at` because a claim does not always start
+        from the original cheque. A preferred paid down part-way through a hold
+        accrues afterwards on what is left, and charging its coupon on money it
+        no longer holds would overstate its claim at exit and understate
+        everything ranking behind it.
+
+        Compounding accrues on the whole standing claim; a non-compounding
+        preferred accrues on capital alone, which is what makes the distinction
+        worth several points over a five-year hold.
+        """
         if self.kind is not SecurityKind.PREFERRED or self.preferred_rate == 0:
             return ZERO
         if years <= 0:
             return ZERO
         if not self.compounding:
-            return self.invested * self.preferred_rate * years
+            return capital * self.preferred_rate * years
         # Decimal has no fractional power, so the growth factor is computed in
         # floating point and returned to exact arithmetic immediately. The
         # boundary is deliberate and the same one the IRR solver crosses.
         factor = money(repr(float(ONE + self.preferred_rate) ** float(years)))
-        return self.invested * (factor - ONE)
+        return (capital + accrued) * (factor - ONE)
 
     def claim_at(self, years: Money) -> Money:
         """Capital plus accrued return: what must be paid before the common."""
@@ -308,6 +326,9 @@ class SecurityOutcome:
     residual_paid: Money
     irr: float | None
     irr_note: str = ""
+    interim: Money = ZERO
+    standing_capital: Money = ZERO
+    unpaid_capital: Money = ZERO
 
     @property
     def name(self) -> str:
@@ -319,25 +340,49 @@ class SecurityOutcome:
 
     @property
     def proceeds(self) -> Money:
+        """What arrived at the exit."""
         return self.preferred_paid + self.residual_paid
 
     @property
+    def received(self) -> Money:
+        """Everything that came back, whenever it came back."""
+        return self.proceeds + self.interim
+
+    @property
     def profit(self) -> Money:
-        return self.proceeds - self.invested
+        return self.received - self.invested
 
     @property
     def moic(self) -> Money | None:
-        """Proceeds over capital. ``None`` where no capital was put in."""
+        """Everything received over capital. ``None`` where no capital was put in.
+
+        Counts interim distributions, because a money multiple is a question
+        about totals and not about timing. The rate of return beside it is the
+        measure that knows when anything happened, and the gap between the two
+        is precisely what a recapitalisation creates.
+        """
         if self.invested <= 0:
             return None
-        return self.proceeds / self.invested
+        return self.received / self.invested
 
     @property
     def claim(self) -> Money:
-        """Capital plus accrued return, for a preferred instrument. Zero otherwise."""
+        """What was owed at the exit: capital still outstanding plus accrued return.
+
+        For a preferred paid down during the hold this is smaller than the
+        original cheque plus a whole hold's coupon, which is the point of
+        paying it down.
+        """
         if self.security.kind is not SecurityKind.PREFERRED:
             return ZERO
-        return self.invested + self.accrued
+        return self.standing_capital + self.accrued
+
+    @property
+    def capital_repaid_early(self) -> Money:
+        """Capital met by an interim distribution rather than at the exit."""
+        if self.security.kind is not SecurityKind.PREFERRED:
+            return ZERO
+        return self.invested - self.standing_capital
 
     @property
     def shortfall(self) -> Money:
@@ -404,6 +449,176 @@ class Attribution:
         return safe_div(component, gross, default=ZERO)
 
 
+@dataclass(frozen=True, slots=True)
+class Distribution:
+    """One payment to the equity, and how the waterfall split it.
+
+    Interim distributions and the exit are the same object because they are the
+    same event: cash arrives, the preferred take their claim, the rest goes to
+    the common. What differs is that the exit is the last one and the incentive
+    plan settles against it.
+    """
+
+    when: date
+    years: Money
+    amount: Money
+    label: str
+    preferred_paid: tuple[Money, ...]
+    residual_paid: tuple[Money, ...]
+    accrued: tuple[Money, ...]
+    capital: tuple[Money, ...]
+    incentive: PoolOutcome | None = None
+    is_exit: bool = False
+
+    @property
+    def to_preferred(self) -> Money:
+        return sum(self.preferred_paid, ZERO)
+
+    @property
+    def to_common(self) -> Money:
+        return sum(self.residual_paid, ZERO)
+
+    @property
+    def to_incentive(self) -> Money:
+        return ZERO if self.incentive is None else self.incentive.paid
+
+    @property
+    def paid(self) -> Money:
+        """Everything the payment was split into."""
+        return self.to_preferred + self.to_common + self.to_incentive
+
+    def reconciles(self, tolerance: Numeric = "1E-12") -> bool:
+        """Whether the split accounts for the whole payment."""
+        return is_close(self.paid, self.amount, tolerance=tolerance)
+
+    def to(self, index: int) -> Money:
+        return self.preferred_paid[index] + self.residual_paid[index]
+
+
+class _Ledger:
+    """The equity's standing claims, rolled forward through a series of payments.
+
+    Held as capital and accrued separately rather than as one claim, because a
+    payment to a preferred instrument is applied to the accrued return before it
+    touches capital. That ordering is what makes "how much capital is still
+    outstanding" a well-defined question after a partial repayment, and the
+    answer is what the next period's coupon is charged on.
+    """
+
+    def __init__(self, securities: Sequence[Security]) -> None:
+        self.securities = tuple(securities)
+        self.capital = [
+            s.invested if s.kind is SecurityKind.PREFERRED else ZERO
+            for s in self.securities
+        ]
+        self.accrued = [ZERO for _ in self.securities]
+        self.received = [ZERO for _ in self.securities]
+        self.as_of = ZERO
+
+    def _roll(self, years: Money) -> None:
+        """Bring every claim up to ``years``."""
+        elapsed = years - self.as_of
+        if elapsed <= 0:
+            return
+        for i, security in enumerate(self.securities):
+            self.accrued[i] += security.accrue(
+                capital=self.capital[i], accrued=self.accrued[i], years=elapsed
+            )
+        self.as_of = years
+
+    def _settle_preferred(self, pot: Money) -> tuple[list[Money], Money]:
+        """Pay the preferred claims out of ``pot``, most senior class first."""
+        paid = [ZERO for _ in self.securities]
+        remaining = pot
+        ranks = sorted(
+            {
+                s.seniority
+                for s in self.securities
+                if s.kind is SecurityKind.PREFERRED
+            }
+        )
+        for rank in ranks:
+            if remaining <= 0:
+                break
+            members = [
+                i
+                for i, s in enumerate(self.securities)
+                if s.kind is SecurityKind.PREFERRED and s.seniority == rank
+            ]
+            claims = [self.capital[i] + self.accrued[i] for i in members]
+            for i, amount in zip(members, allocate_pro_rata(remaining, claims)):
+                paid[i] = amount
+                remaining -= amount
+                # Accrued return first, then capital. The remaining capital is
+                # what the coupon runs on from here.
+                to_accrued = min(amount, self.accrued[i])
+                self.accrued[i] -= to_accrued
+                self.capital[i] -= amount - to_accrued
+        return paid, max(remaining, ZERO)
+
+    def pay(
+        self,
+        amount: Money,
+        *,
+        when: date,
+        years: Money,
+        label: str,
+        pool: OptionPool | None = None,
+        is_exit: bool = False,
+    ) -> Distribution:
+        """Run one payment through the waterfall and record what it did."""
+        self._roll(years)
+        # Snapshotted before the payment: the claim as it stood when the money
+        # arrived is what the payment was measured against.
+        standing_accrued = tuple(self.accrued)
+        standing_capital = tuple(self.capital)
+        preferred_paid, residual = self._settle_preferred(amount)
+
+        settled: PoolOutcome | None = None
+        if pool is not None:
+            watched = (
+                _measured(self.securities, pool.ratchet)
+                if pool.ratchet is not None
+                else []
+            )
+            settled = settle_pool(
+                pool,
+                residual,
+                years=years,
+                measured_capital=sum(
+                    (self.securities[i].invested for i in watched), ZERO
+                ),
+                # Everything the watched instruments have taken so far, this
+                # payment's preferred claim included. A money multiple counts
+                # what a holder has received, not only what arrives last.
+                measured_prior=sum(
+                    (self.received[i] + preferred_paid[i] for i in watched), ZERO
+                ),
+                measured_ownership=sum(
+                    (self.securities[i].ownership for i in watched), ZERO
+                ),
+            )
+            residual = settled.to_common
+
+        shares = [s.ownership for s in self.securities]
+        residual_paid = allocate_pro_rata(residual, [residual * s for s in shares])
+        for i in range(len(self.securities)):
+            self.received[i] += preferred_paid[i] + residual_paid[i]
+
+        return Distribution(
+            when=when,
+            years=years,
+            amount=amount,
+            label=label,
+            preferred_paid=tuple(preferred_paid),
+            residual_paid=tuple(residual_paid),
+            accrued=standing_accrued,
+            capital=standing_capital,
+            incentive=settled,
+            is_exit=is_exit,
+        )
+
+
 def _measured(securities: Sequence[Security], ratchet: Ratchet) -> list[int]:
     """The securities a ratchet's hurdles are read against.
 
@@ -426,64 +641,6 @@ def _measured(securities: Sequence[Security], ratchet: Ratchet) -> list[int]:
     return [by_name[name] for name in ratchet.measured_on]
 
 
-def _waterfall(
-    securities: Sequence[Security],
-    proceeds: Money,
-    years: Money,
-    pool: OptionPool | None = None,
-) -> tuple[list[Money], list[Money], list[Money], PoolOutcome | None]:
-    """Distribute ``proceeds`` through the equity.
-
-    Preferred claims first, then the incentive plan, then the residual. The
-    plan sits where it does because that is where it sits in the documents: it
-    is an interest in the common, so it is diluted by nothing and it dilutes
-    everything below the preferred — the sponsor's own equity included.
-    """
-    accrued = [s.accrued_at(years) for s in securities]
-    preferred_paid = [ZERO for _ in securities]
-
-    remaining = proceeds
-    ranks = sorted({s.seniority for s in securities if s.kind is SecurityKind.PREFERRED})
-    for rank in ranks:
-        if remaining <= 0:
-            break
-        members = [
-            i
-            for i, s in enumerate(securities)
-            if s.kind is SecurityKind.PREFERRED and s.seniority == rank
-        ]
-        claims = [securities[i].invested + accrued[i] for i in members]
-        for i, paid in zip(members, allocate_pro_rata(remaining, claims)):
-            preferred_paid[i] = paid
-            remaining -= paid
-
-    residual = max(remaining, ZERO)
-
-    settled: PoolOutcome | None = None
-    if pool is not None:
-        watched = (
-            _measured(securities, pool.ratchet) if pool.ratchet is not None else []
-        )
-        settled = settle_pool(
-            pool,
-            residual,
-            years=years,
-            measured_capital=sum((securities[i].invested for i in watched), ZERO),
-            # What the watched instruments have already taken off the top. A
-            # money multiple counts everything a holder receives, so a sponsor
-            # preferred already repaid is part of the way to its hurdle.
-            measured_prior=sum((preferred_paid[i] for i in watched), ZERO),
-            measured_ownership=sum((securities[i].ownership for i in watched), ZERO),
-        )
-        residual = settled.to_common
-
-    shares = [s.ownership for s in securities]
-    # Ownership is validated to sum to one, so the residual is fully distributed;
-    # the allocator is still used so the last penny lands on a real holder.
-    residual_paid = allocate_pro_rata(residual, [residual * s for s in shares])
-    return accrued, preferred_paid, residual_paid, settled
-
-
 @dataclass(frozen=True, slots=True)
 class Outcome:
     """The exit, the waterfall through it, and the attribution behind it."""
@@ -494,6 +651,7 @@ class Outcome:
     attribution: Attribution
     convention: DayCount = DayCount.ACT_365F
     incentive: PoolOutcome | None = None
+    payments: tuple[Distribution, ...] = ()
 
     def __len__(self) -> int:
         return len(self.securities)
@@ -560,26 +718,50 @@ class Outcome:
                 f"the exit ({valuation.when}) is not after the close ({entry_date})"
             )
 
+        ledger = _Ledger(holders)
+        interim: list[Distribution] = []
+        for period, amount in schedule.distributions():
+            if period.end >= valuation.when:
+                # A distribution at the exit date is part of the exit, not a
+                # payment before it; folding it in twice would pay it twice.
+                continue
+            interim.append(
+                ledger.pay(
+                    amount,
+                    when=period.end,
+                    years=year_fraction(entry_date, period.end, convention),
+                    label=f"Distribution, period {period.index}",
+                )
+            )
+
         years = year_fraction(entry_date, valuation.when, convention)
-        accrued, preferred, residual, settled = _waterfall(
-            holders, valuation.equity_value, years, incentive
+        final = ledger.pay(
+            valuation.equity_value,
+            when=valuation.when,
+            years=years,
+            label="Exit proceeds",
+            pool=incentive,
+            is_exit=True,
         )
+        payments = tuple(interim) + (final,)
 
         rows = []
         for i, holder in enumerate(holders):
             rate = _rate(
                 holder.invested,
-                preferred[i] + residual[i],
+                [(p.when, p.to(i)) for p in payments],
                 entry_date,
-                valuation.when,
                 convention,
             )
             rows.append(
                 SecurityOutcome(
                     security=holder,
-                    accrued=accrued[i],
-                    preferred_paid=preferred[i],
-                    residual_paid=residual[i],
+                    accrued=final.accrued[i],
+                    preferred_paid=final.preferred_paid[i],
+                    residual_paid=final.residual_paid[i],
+                    interim=sum((p.to(i) for p in interim), ZERO),
+                    standing_capital=final.capital[i],
+                    unpaid_capital=ledger.capital[i],
                     irr=rate.value,
                     irr_note=rate.note,
                 )
@@ -591,7 +773,8 @@ class Outcome:
             securities=tuple(rows),
             attribution=_attribute(transaction, model, schedule, valuation, holders),
             convention=convention,
-            incentive=settled,
+            incentive=final.incentive,
+            payments=payments,
         )
 
     # -- Deal-level figures ----------------------------------------------
@@ -602,17 +785,36 @@ class Outcome:
 
     @property
     def proceeds(self) -> Money:
+        """What the securities took at the exit."""
         return sum((r.proceeds for r in self.securities), ZERO)
 
     @property
+    def interim(self) -> Money:
+        """What the securities took before the exit."""
+        return sum((r.interim for r in self.securities), ZERO)
+
+    @property
+    def received(self) -> Money:
+        return self.proceeds + self.interim
+
+    @property
+    def distributions(self) -> tuple[Distribution, ...]:
+        """The payments before the exit, in the order they were made."""
+        return tuple(p for p in self.payments if not p.is_exit)
+
+    @property
+    def was_recapitalised(self) -> bool:
+        return bool(self.distributions)
+
+    @property
     def profit(self) -> Money:
-        return self.proceeds - self.invested
+        return self.received - self.invested
 
     @property
     def moic(self) -> Money | None:
         if self.invested <= 0:
             return None
-        return self.proceeds / self.invested
+        return self.received / self.invested
 
     @property
     def holding_period_years(self) -> Money:
@@ -621,13 +823,11 @@ class Outcome:
     @property
     def irr(self) -> float | None:
         """The deal-level rate, across all equity taken together."""
-        return _rate(
-            self.invested,
-            self.proceeds,
-            self.entry_date,
-            self.valuation.when,
-            self.convention,
-        ).value
+        receipts = [
+            (p.when, sum(p.preferred_paid, ZERO) + sum(p.residual_paid, ZERO))
+            for p in self.payments
+        ]
+        return _rate(self.invested, receipts, self.entry_date, self.convention).value
 
     @property
     def incentive_paid(self) -> Money:
@@ -678,26 +878,33 @@ class Rate(NamedTuple):
 
 def _rate(
     invested: Money,
-    proceeds: Money,
+    receipts: Sequence[tuple[date, Money]],
     entry: date,
-    when: date,
     convention: DayCount,
 ) -> Rate:
-    """The annualised rate on one capital-in, cash-out pair."""
+    """The annualised rate on capital in and everything that came back.
+
+    A dated stream rather than a pair, because an interim distribution is worth
+    what it is worth only by virtue of arriving early. Every receipt after the
+    first is positive, so the stream changes sign exactly once and the root is
+    unique — but the solver is asked rather than assumed, because a structure
+    that ever calls capital mid-hold would break that and should say so instead
+    of reporting whichever root it happened to find.
+    """
     if invested <= 0:
         return Rate(None, "no capital was invested")
-    if proceeds <= 0:
+    received = sum((amount for _, amount in receipts), ZERO)
+    if received <= 0:
         return Rate(None, "wiped out: there is no rate at which nothing back is a return")
-    stream = CashFlowStream(
-        flows=(
-            CashFlow(when=entry, amount=-invested, label="invested"),
-            CashFlow(when=when, amount=proceeds, label="proceeds"),
-        ),
-        convention=convention,
+    flows = [CashFlow(when=entry, amount=-invested, label="invested")]
+    flows.extend(
+        CashFlow(when=when, amount=amount, label="received")
+        for when, amount in receipts
+        if amount != 0
     )
     try:
-        return Rate(stream.xirr())
-    except IRRError as exc:  # pragma: no cover - two flows of opposite sign always solve
+        return Rate(CashFlowStream(flows=tuple(flows), convention=convention).xirr())
+    except IRRError as exc:  # pragma: no cover - one sign change always solves
         return Rate(None, str(exc))
 
 
