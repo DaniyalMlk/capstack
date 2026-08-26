@@ -34,9 +34,10 @@ from .debt import (
     TrancheKind,
 )
 from .drivers import Driver
-from .money import ONE, ZERO, Money, money
+from .incentive import IncentiveError, OptionPool, Ratchet, Vesting
+from .money import ONE, ZERO, Money, money, safe_div
 from .operating import DEFAULT_NOL_USAGE_LIMIT, OperatingAssumptions, OperatingModel
-from .outcome import Outcome, Security, SecurityKind
+from .outcome import Outcome, Security, SecurityKind, default_securities
 from .periods import Frequency, PeriodGrid
 from .transaction import DebtFunding, EntryValuation, LineItem, Transaction
 
@@ -45,6 +46,7 @@ __all__ = [
     "DealSpecError",
     "EquityPlan",
     "Funding",
+    "IncentivePlan",
     "SecurityPlan",
     "load_deal",
     "parse_deal",
@@ -194,6 +196,74 @@ class EquityPlan:
 
 
 @dataclass(frozen=True, slots=True)
+class IncentivePlan:
+    """The management plan as the file describes it, before a price is applied.
+
+    A plan exists for the same reason ``SecurityPlan`` does: the useful way to
+    describe a strike is not as an amount. Options granted at close are normally
+    struck at what the equity was worth that morning, so that management earn on
+    value they create and not on value they were handed. That figure moves with
+    the entry multiple, and a strike frozen at parse time would price every
+    column of a sensitivity grid against the base case's entry valuation.
+
+    ``strike_at_entry`` is therefore a multiple of the fully diluted equity value
+    at close rather than an amount. The derivation matters and is easy to get
+    wrong: the existing holders' cheque buys them the share of the company the
+    pool does *not* hold, so the fully diluted value at close is that cheque
+    grossed up by one less the pool's share, and the strike is the pool's share
+    of it. Struck at exactly that, a plan is precisely at the money on a deal
+    that creates no value — which is what "struck at cost" is supposed to mean,
+    and what the naive derivation of share times cheque quietly fails to deliver.
+    """
+
+    name: str
+    share: Money
+    strike: Money = ZERO
+    strike_at_entry: Money | None = None
+    vesting: Vesting | None = None
+    ratchet: Ratchet | None = None
+
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise IncentiveError("an incentive plan needs a name")
+        if not (0 <= self.share < 1):
+            raise IncentiveError(
+                f"{self.name}: the pool holds a share of the equity, so at least 0 "
+                f"and below 1; got {self.share}"
+            )
+        if self.strike < 0:
+            raise IncentiveError(f"{self.name}: the strike must not be negative")
+        if self.strike_at_entry is not None and self.strike_at_entry < 0:
+            raise IncentiveError(
+                f"{self.name}: a strike at a negative multiple of the entry value "
+                f"is not a strike"
+            )
+
+    def strike_on(self, invested: Money) -> Money:
+        """The aggregate cost of exercising the whole pool.
+
+        ``invested`` is the equity capital the pool dilutes: every cheque in the
+        stack, preferred included, since the pool's share is of the company and
+        not of one instrument in it.
+        """
+        if self.strike_at_entry is None:
+            return self.strike
+        entry_equity_value = safe_div(invested, ONE - self.share, default=ZERO)
+        return self.share * entry_equity_value * self.strike_at_entry
+
+    def resolve(self, securities: Sequence[Security]) -> OptionPool:
+        """This plan as a pool, priced against the equity that funded the deal."""
+        invested = sum((s.invested for s in securities), ZERO)
+        return OptionPool(
+            name=self.name,
+            share=self.share,
+            strike=self.strike_on(invested),
+            vesting=self.vesting,
+            ratchet=self.ratchet,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class Deal:
     """Everything a deal file describes.
 
@@ -217,6 +287,19 @@ class Deal:
     exit_multiple: Money | None = None
     exit_fee_rate: Money = ZERO_RATE
     equity: EquityPlan = EquityPlan()
+    incentive: IncentivePlan | None = None
+
+    @property
+    def pool(self) -> OptionPool | None:
+        """The management plan, struck against this deal's equity.
+
+        Derived for the same reason the securities are: a deal rebuilt at a
+        different entry multiple raises a different sponsor cheque, and a plan
+        struck at the equity value of that cheque has to move with it.
+        """
+        if self.incentive is None:
+            return None
+        return self.incentive.resolve(self.securities or default_securities(self.transaction))
 
     @property
     def securities(self) -> tuple[Security, ...]:
@@ -344,7 +427,10 @@ class Deal:
                 exit_multiple=self.exit_multiple,
                 exit_fee_rate=self.exit_fee_rate,
                 securities=self.securities or None,
+                incentive=self.pool,
             )
+        except IncentiveError as exc:
+            raise DealSpecError(f"exit.incentive: {exc}") from exc
         except ValueError as exc:
             raise DealSpecError(f"exit: {exc}") from exc
 
@@ -617,7 +703,112 @@ def _parse_security(data: Any, index: int) -> SecurityPlan:
         raise DealSpecError(f"{where}: {exc}") from exc
 
 
-def _parse_exit(data: Any) -> tuple[Money | None, Money, EquityPlan]:
+def _parse_vesting(data: Any, where: str) -> Vesting:
+    """Read a vesting schedule.
+
+    A bare number is the common case — "four-year straight-line" — and needs no
+    object around it to say so.
+    """
+    if not isinstance(data, dict):
+        return _vesting(_amount(data, where), ZERO, False, where)
+    accelerates = _flag(data, "accelerates", where)
+    return _vesting(
+        _amount(_require(data, "years", where), f"{where}.years"),
+        _optional_amount(data, "cliff_years", where),
+        False if accelerates is None else accelerates,
+        where,
+    )
+
+
+def _vesting(years: Money, cliff: Money, accelerates: bool, where: str) -> Vesting:
+    try:
+        return Vesting(years=years, cliff_years=cliff, accelerates=accelerates)
+    except IncentiveError as exc:
+        raise DealSpecError(f"{where}: {exc}") from exc
+
+
+def _parse_ratchet(data: Any, where: str) -> Ratchet:
+    """Read a ratchet: the bands, and the paper the hurdles are read against.
+
+    Bands are pairs for the same reason sweep-grid steps are — "5% to a 2.0x,
+    10% above it" is two numbers and a level, and naming each half of the pair
+    makes the schedule harder to read rather than easier.
+    """
+    if not isinstance(data, dict):
+        raise DealSpecError(f"{where}: expected an object")
+    bands_raw = _require(data, "bands", where)
+    if not isinstance(bands_raw, list) or not bands_raw:
+        raise DealSpecError(f"{where}.bands: expected a list of [hurdle, share] pairs")
+
+    bands: list[tuple[Money, Money]] = []
+    for i, item in enumerate(bands_raw):
+        if not isinstance(item, list) or len(item) != 2:
+            raise DealSpecError(f"{where}.bands[{i}]: expected a pair of [hurdle, share]")
+        bands.append(
+            (
+                _amount(item[0], f"{where}.bands[{i}][0]"),
+                _amount(item[1], f"{where}.bands[{i}][1]"),
+            )
+        )
+
+    measured_raw = data.get("measured_on", [])
+    if not isinstance(measured_raw, list):
+        raise DealSpecError(f"{where}.measured_on: expected a list of security names")
+
+    try:
+        return Ratchet.of(bands, measured_on=[str(name) for name in measured_raw])
+    except IncentiveError as exc:
+        raise DealSpecError(f"{where}: {exc}") from exc
+
+
+def _parse_incentive(data: Any) -> IncentivePlan:
+    """Read the management plan.
+
+    The strike is described one of two ways and not both. An amount is right for
+    a plan whose price was agreed in cash. A multiple of the entry equity value
+    is right for everything else, and it is the only form that survives being
+    asked what the deal looks like at a different entry multiple.
+    """
+    where = "exit.incentive"
+    if not isinstance(data, dict):
+        raise DealSpecError(f"{where}: expected an object")
+
+    if data.get("strike") is not None and data.get("strike_at_entry") is not None:
+        raise DealSpecError(
+            f"{where}: 'strike' and 'strike_at_entry' are two answers to the same "
+            f"question; give one"
+        )
+    strike_at_entry = (
+        _amount(data["strike_at_entry"], f"{where}.strike_at_entry")
+        if data.get("strike_at_entry") is not None
+        else None
+    )
+
+    vesting = (
+        _parse_vesting(data["vesting"], f"{where}.vesting")
+        if data.get("vesting") is not None
+        else None
+    )
+    ratchet = (
+        _parse_ratchet(data["ratchet"], f"{where}.ratchet")
+        if data.get("ratchet") is not None
+        else None
+    )
+
+    try:
+        return IncentivePlan(
+            name=str(data.get("name", "Management incentive plan")),
+            share=_amount(_require(data, "share", where), f"{where}.share"),
+            strike=_optional_amount(data, "strike", where),
+            strike_at_entry=strike_at_entry,
+            vesting=vesting,
+            ratchet=ratchet,
+        )
+    except IncentiveError as exc:
+        raise DealSpecError(f"{where}: {exc}") from exc
+
+
+def _parse_exit(data: Any) -> tuple[Money | None, Money, EquityPlan, IncentivePlan | None]:
     """Read the exit assumptions and the equity that shares in them."""
     where = "exit"
     if not isinstance(data, dict):
@@ -629,16 +820,19 @@ def _parse_exit(data: Any) -> tuple[Money | None, Money, EquityPlan]:
         else None
     )
     fee_rate = _optional_amount(data, "fee_rate", where)
+    incentive = (
+        _parse_incentive(data["incentive"]) if data.get("incentive") is not None else None
+    )
 
     equity_raw = data.get("equity")
     if equity_raw is None:
-        return multiple, fee_rate, EquityPlan()
+        return multiple, fee_rate, EquityPlan(), incentive
     if not isinstance(equity_raw, list) or not equity_raw:
         raise DealSpecError(f"{where}.equity: expected a list of securities")
 
     plans = tuple(_parse_security(item, i) for i, item in enumerate(equity_raw))
     try:
-        return multiple, fee_rate, EquityPlan(plans=plans)
+        return multiple, fee_rate, EquityPlan(plans=plans), incentive
     except ValueError as exc:
         raise DealSpecError(f"{where}.equity: {exc}") from exc
 
@@ -933,13 +1127,14 @@ def parse_deal(data: dict[str, Any]) -> Deal:
     exit_multiple: Money | None = None
     exit_fee_rate: Money = ZERO_RATE
     equity = EquityPlan()
+    incentive: IncentivePlan | None = None
     if data.get("exit") is not None:
         if structure is None or grid is None:
             raise DealSpecError(
                 "exit: there is nothing to exit from; describe the capital "
                 "structure and the projection first"
             )
-        exit_multiple, exit_fee_rate, equity = _parse_exit(data["exit"])
+        exit_multiple, exit_fee_rate, equity, incentive = _parse_exit(data["exit"])
 
     return Deal(
         name=name,
@@ -957,6 +1152,7 @@ def parse_deal(data: dict[str, Any]) -> Deal:
         exit_multiple=exit_multiple,
         exit_fee_rate=exit_fee_rate,
         equity=equity,
+        incentive=incentive,
     )
 
 
