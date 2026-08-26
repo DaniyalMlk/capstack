@@ -17,6 +17,7 @@ from typing import Any, Sequence
 from .covenants import CovenantObservation
 from .daycount import DayCount
 from .money import quantize
+from .outcome import Outcome
 from .report import Report, prepare
 from .returns import AmbiguousIRR, CashFlow, CashFlowStream, IRRError
 from .sensitivity import Axis, Grid, Metric, SensitivityError, format_value
@@ -784,6 +785,7 @@ def _exit_report(deal: Deal) -> dict[str, Any]:
             }
             for row in outcome
         ],
+        "incentive": _incentive_block(outcome),
         "totals": {
             "invested": _amount_str(outcome.invested),
             "proceeds": _amount_str(outcome.proceeds),
@@ -791,6 +793,7 @@ def _exit_report(deal: Deal) -> dict[str, Any]:
             "moic": None if outcome.moic is None else float(outcome.moic),
             "irr": outcome.irr,
             "holding_period_years": float(outcome.holding_period_years),
+            "distributed": _amount_str(outcome.distributed),
         },
         "attribution": {
             "ebitda_growth": _amount_str(a.ebitda_growth),
@@ -805,6 +808,30 @@ def _exit_report(deal: Deal) -> dict[str, Any]:
     }
 
 
+def _incentive_block(outcome: Outcome) -> dict[str, Any] | None:
+    """The management plan, or ``None`` where the deal describes none.
+
+    Absent rather than zeroed, because a deal with no plan and a deal whose
+    plan expired worthless are different facts and a reader consuming this as
+    JSON should not have to infer which one they are looking at.
+    """
+    settled = outcome.incentive
+    if settled is None:
+        return None
+    return {
+        "name": settled.name,
+        "vested": float(settled.vested),
+        "residual_before": _amount_str(settled.residual),
+        "pot": _amount_str(settled.pot),
+        "entitlement": _amount_str(settled.entitlement),
+        "strike_paid": _amount_str(settled.strike_paid),
+        "paid": _amount_str(settled.paid),
+        "dilution": _amount_str(settled.dilution),
+        "effective_share": float(settled.effective_share),
+        "exercised": settled.exercised,
+    }
+
+
 #: The bridge, in the order it is read: what the business earned, what the
 #: market paid for it, what the lenders were given back, what it cost.
 _ATTRIBUTION_ROWS: tuple[tuple[str, str], ...] = (
@@ -813,6 +840,33 @@ _ATTRIBUTION_ROWS: tuple[tuple[str, str], ...] = (
     ("Debt paydown", "debt_paydown"),
     ("Entry and exit costs", "costs"),
 )
+
+
+def _print_incentive(block: dict[str, Any] | None) -> None:
+    """Print the management plan, and say plainly when it was worth nothing."""
+    if block is None:
+        return
+    print(f"  {block['name']}")
+    if not block["exercised"]:
+        print(
+            "    Out of the money at this exit: the options lapse, management are"
+        )
+        print("    paid nothing, and the common are not diluted.")
+        print(f"    {'Vested':<26}{block['vested']:>13.1%}")
+        print()
+        return
+    print(f"    {'Vested':<26}{block['vested']:>13.1%}")
+    print(f"    {'Share of the pot':<26}{block['effective_share']:>13.1%}")
+    for label, key in (
+        ("Residual before the plan", "residual_before"),
+        ("Strike paid in", "strike_paid"),
+        ("Pot divided", "pot"),
+        ("Entitlement", "entitlement"),
+        ("Paid to management", "paid"),
+    ):
+        print(f"    {label:<26}{_format_money(Decimal(block[key])):>14}")
+    print("    What management are paid is what the common give up, to the penny.")
+    print()
 
 
 def _print_exit(report: dict[str, Any]) -> None:
@@ -874,6 +928,8 @@ def _print_exit(report: dict[str, Any]) -> None:
     )
     print(f"    over {totals['holding_period_years']:.2f} years")
     print()
+
+    _print_incentive(report["incentive"])
 
     attribution = report["attribution"]
     print("  Where the value came from")

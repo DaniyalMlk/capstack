@@ -1,0 +1,179 @@
+{
+  "name": "Project Kestrel",
+  "close_date": "2026-09-30",
+  "entry": {
+    "ltm_ebitda": 86.0,
+    "multiple": 9.75,
+    "existing_debt": 128.0,
+    "existing_cash": 21.0
+  },
+  "debt": [
+    {
+      "name": "Revolving credit facility",
+      "kind": "revolver",
+      "face": 0.0,
+      "commitment": 45.0,
+      "financing_fee_rate": 0.0075,
+      "cash_rate": 0.0325,
+      "undrawn_fee": 0.005
+    },
+    {
+      "name": "Unitranche",
+      "kind": "term_loan",
+      "face": 420.0,
+      "issue_price": 0.99,
+      "financing_fee_rate": 0.025,
+      "cash_rate": 0.055,
+      "floor": 0.0125,
+      "amortisation": 0.01,
+      "maturity": 7
+    },
+    {
+      "name": "Vendor loan note",
+      "kind": "seller_note",
+      "face": 35.0,
+      "issue_price": 1.0,
+      "cash_rate": 0.0,
+      "pik_rate": 0.08
+    }
+  ],
+  "rollover_equity": 24.0,
+  "cash_from_balance_sheet": 15.0,
+  "cash_to_balance_sheet": 14.0,
+  "transaction_fee_rate": 0.016,
+  "structure": {
+    "minimum_cash": 12.0,
+    "base_rate": {
+      "ramp": [
+        0.0415,
+        0.0295
+      ]
+    },
+    "day_count": "ACT/360",
+    "interest_basis": "average",
+    "sweep_grid": {
+      "steps": [
+        [
+          4.5,
+          0.75
+        ],
+        [
+          3.5,
+          0.5
+        ],
+        [
+          2.75,
+          0.25
+        ]
+      ],
+      "floor": 0.0,
+      "net": true
+    }
+  },
+  "projection": {
+    "years": 5,
+    "frequency": "annual"
+  },
+  "operating": {
+    "opening_revenue": 412.0,
+    "revenue_growth": {
+      "ramp": [
+        0.095,
+        0.045
+      ]
+    },
+    "ebitda_margin": {
+      "ramp": [
+        0.212,
+        0.245
+      ]
+    },
+    "da_rate": {
+      "constant": 0.031
+    },
+    "capex_rate": {
+      "ramp": [
+        0.042,
+        0.033
+      ]
+    },
+    "nwc_rate": {
+      "constant": 0.085
+    },
+    "tax_rate": 0.25,
+    "opening_carryforward": 0.0
+  },
+  "covenants": [
+    {
+      "name": "Total net leverage",
+      "measure": "net_leverage",
+      "threshold": {
+        "values": [
+          5.25,
+          4.75,
+          4.25,
+          3.75,
+          3.5
+        ]
+      },
+      "first_test_period": 2
+    },
+    {
+      "name": "Interest coverage",
+      "measure": "interest_coverage",
+      "threshold": {
+        "ramp": [
+          2.0,
+          2.5
+        ]
+      },
+      "first_test_period": 2
+    }
+  ],
+  "exit": {
+    "multiple": 9.75,
+    "fee_rate": 0.0075,
+    "equity": [
+      {
+        "name": "Sponsor equity",
+        "kind": "common",
+        "of": "sponsor",
+        "ownership": 0.87
+      },
+      {
+        "name": "Management rollover",
+        "kind": "common",
+        "of": "rollover",
+        "ownership": 0.13
+      }
+    ],
+    "incentive": {
+      "name": "Management incentive plan",
+      "share": 0.1,
+      "strike_at_entry": 1.0,
+      "vesting": {
+        "years": 4,
+        "cliff_years": 1
+      },
+      "ratchet": {
+        "measured_on": [
+          "Sponsor equity"
+        ],
+        "bands": [
+          [
+            0.0,
+            0.05
+          ],
+          [
+            2.0,
+            0.1
+          ],
+          [
+            2.5,
+            0.15
+          ]
+        ]
+      }
+    }
+  }
+}

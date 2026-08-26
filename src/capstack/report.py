@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from datetime import date
 
 from .covenants import CovenantReport
+from .incentive import PoolOutcome
 from .money import ONE, ZERO, Money, money, quantize, safe_div
 from .outcome import Outcome
 from .returns import cagr
@@ -161,6 +162,8 @@ def prepare(deal: Deal, *, breakevens: bool = True) -> Report:
     if case.covenants is not None:
         sections.append(_covenants(case.covenants))
     sections.append(_exit(case.outcome))
+    if case.outcome.incentive is not None:
+        sections.append(_incentive(case.outcome.incentive))
     sections.append(_bridge(case.outcome))
     if breakevens:
         sections.append(_boundary(deal, case))
@@ -521,6 +524,84 @@ def _exit(outcome: Outcome) -> Section:
             rows=tuple(rows),
             align=("l", "l", "r", "r", "r", "r"),
         ),
+        notes=tuple(notes),
+    )
+
+
+def _incentive(settled: PoolOutcome) -> Section:
+    """The management plan: what it is worth, and what it cost the common."""
+    pool = settled.pool
+    notes: list[str] = []
+
+    if not settled.exercised:
+        notes.append(
+            "The pool is out of the money at this exit. The options lapse, so "
+            "management are paid nothing and the common are not diluted — which "
+            "is the point of striking a plan rather than granting shares."
+        )
+    if settled.forfeited_share > 0:
+        notes.append(
+            f"{_percent(settled.forfeited_share)} of the pool had not vested by "
+            f"the exit and is forfeited rather than accelerated."
+        )
+    if pool.ratchet is not None:
+        watched = (
+            ", ".join(pool.ratchet.measured_on)
+            if pool.ratchet.measured_on
+            else "the equity as a whole"
+        )
+        notes.append(
+            f"The ratchet is measured on {watched}, and pays a marginal share "
+            f"above each hurdle rather than a higher share of everything. That "
+            f"is what keeps the sponsor's proceeds rising with the sale price at "
+            f"every point, including the one where a hurdle is crossed."
+        )
+
+    lines = [
+        Line("Pool, fully diluted", _percent(pool.share)),
+        Line("Vested at exit", _percent(settled.vested)),
+        Line("Residual before the plan", _amount(settled.residual)),
+        Line("Strike paid in", _amount(settled.strike_paid)),
+        Line("Pot divided", _amount(settled.pot)),
+        Line("Share of the pot taken", _percent(settled.effective_share)),
+        Line("Paid to management", _amount(settled.paid)),
+    ]
+
+    if pool.ratchet is not None:
+        rows = tuple(
+            (
+                _turns(band.hurdle) if band.hurdle > 0 else "from the first pound",
+                _percent(band.share),
+            )
+            for band in pool.ratchet
+        )
+        table: Table | None = Table(
+            headings=("Above", "Marginal share"),
+            rows=rows,
+            align=("l", "r"),
+        )
+    else:
+        table = None
+
+    summary = (
+        f"Management take {_amount(settled.paid)} out of "
+        f"{_amount(settled.residual)} reaching the common, an effective "
+        f"{_percent(settled.effective_share)} of the pot they share in. What "
+        f"they are paid is what the common give up, to the penny."
+    )
+    if not settled.exercised:
+        summary = (
+            f"The plan pays nothing at this exit: a "
+            f"{_percent(pool.share)} pool struck at "
+            f"{_amount(pool.strike)} is not worth exercising against "
+            f"{_amount(settled.residual)} of residual."
+        )
+
+    return Section(
+        title=pool.name,
+        summary=summary,
+        lines=tuple(lines),
+        table=table,
         notes=tuple(notes),
     )
 
