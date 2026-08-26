@@ -28,6 +28,15 @@ from .debt import (
     TrancheKind,
 )
 from .drivers import Driver
+from .incentive import (
+    IncentiveError,
+    OptionPool,
+    PoolOutcome,
+    Ratchet,
+    RatchetBand,
+    Vesting,
+    settle_pool,
+)
 from .money import Money, allocate_pro_rata, money, quantize, rate, rescale
 from .operating import (
     OperatingAssumptions,
@@ -75,6 +84,7 @@ from .spec import (
     DealSpecError,
     EquityPlan,
     Funding,
+    IncentivePlan,
     SecurityPlan,
     load_deal,
     parse_deal,
@@ -121,6 +131,8 @@ __all__ = [
     "Funding",
     "Grid",
     "IRRError",
+    "IncentiveError",
+    "IncentivePlan",
     "InterestBasis",
     "LineItem",
     "Measure",
@@ -131,10 +143,14 @@ __all__ = [
     "OperatingAssumptions",
     "OperatingModel",
     "OperatingPeriod",
+    "OptionPool",
     "Outcome",
     "Period",
     "PeriodGrid",
+    "PoolOutcome",
     "PurchaseAccounting",
+    "Ratchet",
+    "RatchetBand",
     "Report",
     "Section",
     "Security",
@@ -154,6 +170,7 @@ __all__ = [
     "UnbalancedBalanceSheet",
     "UnbalancedTransaction",
     "Unit",
+    "Vesting",
     "__version__",
     "allocate_pro_rata",
     "apply_carryforward",
@@ -164,6 +181,7 @@ __all__ = [
     "moic",
     "money",
     "npv_periodic",
+    "settle_pool",
     "parse_deal",
     "quantize",
     "rate",
