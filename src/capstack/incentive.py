@@ -50,7 +50,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 
-from .money import ONE, ZERO, Money, Numeric, money, safe_div
+from .money import ONE, ZERO, Money, Numeric, is_close, money, safe_div
 
 __all__ = [
     "IncentiveError",
@@ -435,6 +435,18 @@ class PoolOutcome:
     @property
     def is_in_the_money(self) -> bool:
         return self.exercised
+
+    def reconciles(self, tolerance: Numeric = "1E-12") -> bool:
+        """Whether the two sides of the plan agree.
+
+        What management take and what the common give up are the same quantity
+        reached from opposite ends — one is the entitlement net of the strike,
+        the other is the residual net of what the common were left. They are
+        algebraically identical, which is why this is worth checking: the two
+        expressions associate their arithmetic differently, so the check is a
+        real one against the working precision rather than a tautology.
+        """
+        return is_close(self.paid, self.dilution, tolerance=tolerance)
 
     @property
     def forfeited_share(self) -> Money:
