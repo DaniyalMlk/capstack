@@ -12,6 +12,7 @@ from capstack.cli import main
 from capstack.incentive import IncentiveError
 from capstack.money import ONE, ZERO, is_close, money
 from capstack.report import prepare
+from capstack.sensitivity import Case, Dimension
 from capstack.spec import DealSpecError, load_deal, parse_deal
 
 KESTREL = str(Path(__file__).resolve().parents[1] / "examples" / "kestrel.json")
@@ -393,3 +394,53 @@ class TestPlanErrorsSurfaceAsSpecErrors:
         with pytest.raises(DealSpecError) as caught:
             deal.realise()
         assert isinstance(caught.value.__cause__, IncentiveError)
+
+
+# --------------------------------------------------------------------------
+# Across a grid
+# --------------------------------------------------------------------------
+
+class TestAcrossASensitivityGrid:
+    """The reason the plan is a description rather than a settled amount."""
+
+    def test_the_strike_is_repriced_when_the_entry_multiple_moves(self) -> None:
+        deal = load_deal(KESTREL)
+        dearer = Dimension.ENTRY_MULTIPLE.apply(deal, money("11.5"))
+
+        base = deal.pool
+        moved = dearer.pool
+        assert base is not None and moved is not None
+        # A higher price is a bigger sponsor cheque, so the options that were
+        # struck at what the equity cost now cost more to exercise.
+        assert moved.strike > base.strike
+
+    def test_a_grid_reprices_the_plan_per_cell_rather_than_once(self) -> None:
+        deal = load_deal(KESTREL)
+        strikes = set()
+        for multiple in ("9.00", "9.75", "10.50"):
+            cell = Dimension.ENTRY_MULTIPLE.apply(deal, money(multiple))
+            pool = cell.pool
+            assert pool is not None
+            strikes.add(pool.strike)
+        assert len(strikes) == 3
+
+    def test_every_cell_still_distributes_its_whole_equity_value(self) -> None:
+        deal = load_deal(KESTREL)
+        for multiple in ("8.50", "9.75", "11.00"):
+            case = Case.run(Dimension.EXIT_MULTIPLE.apply(deal, money(multiple)))
+            assert case.outcome.distributes_everything
+            settled = case.outcome.incentive
+            assert settled is not None
+            assert settled.reconciles()
+
+    def test_the_plan_costs_less_the_worse_the_exit(self) -> None:
+        """Struck options are the whole point: a bad exit costs the sponsor nothing."""
+        deal = load_deal(KESTREL)
+        paid = []
+        for multiple in ("6.00", "8.00", "10.00", "12.00"):
+            case = Case.run(Dimension.EXIT_MULTIPLE.apply(deal, money(multiple)))
+            settled = case.outcome.incentive
+            assert settled is not None
+            paid.append(settled.paid)
+        assert paid == sorted(paid)
+        assert paid[0] == ZERO
