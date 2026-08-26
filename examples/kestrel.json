@@ -41,6 +41,13 @@
   "cash_from_balance_sheet": 15.0,
   "cash_to_balance_sheet": 14.0,
   "transaction_fee_rate": 0.016,
+  "target": {
+    "total_assets": 690.0,
+    "total_liabilities": 305.0,
+    "goodwill": 140.0,
+    "step_up": 60.0,
+    "step_up_tax_rate": 0.25
+  },
   "structure": {
     "minimum_cash": 12.0,
     "base_rate": {
