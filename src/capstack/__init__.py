@@ -28,6 +28,12 @@ from .debt import (
     TrancheKind,
 )
 from .drivers import Driver
+from .events import (
+    Draw,
+    Recapitalisation,
+    RecapitalisationError,
+    RecapitalisationOutcome,
+)
 from .incentive import (
     IncentiveError,
     OptionPool,
@@ -47,6 +53,7 @@ from .operating import (
 )
 from .outcome import (
     Attribution,
+    Distribution,
     ExitValuation,
     Outcome,
     Security,
@@ -123,6 +130,8 @@ __all__ = [
     "DebtSchedule",
     "Dimension",
     "Direction",
+    "Distribution",
+    "Draw",
     "Driver",
     "EntryValuation",
     "EquityPlan",
@@ -150,6 +159,9 @@ __all__ = [
     "PoolOutcome",
     "PurchaseAccounting",
     "Ratchet",
+    "Recapitalisation",
+    "RecapitalisationError",
+    "RecapitalisationOutcome",
     "RatchetBand",
     "Report",
     "Section",

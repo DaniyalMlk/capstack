@@ -459,10 +459,16 @@ _SCHEDULE_ROWS: tuple[tuple[str, str, bool], ...] = (
     ("Mandatory repayment", "mandatory_repayment", True),
     ("Cash sweep", "sweep_repayment", True),
     ("Revolver draw", "revolver_draw", False),
+    ("Recapitalisation", "recapitalisation", False),
+    ("Distribution paid", "distribution", True),
     ("Closing cash", "closing_cash", False),
     ("Accrued to balances", "pik_interest", False),
     ("Closing debt", "closing_debt", False),
 )
+
+
+#: Rows that only appear on a schedule where something actually happened.
+_EVENT_ROWS = frozenset({"recapitalisation", "distribution"})
 
 
 def _schedule_report(deal: Deal) -> dict[str, Any]:
@@ -497,6 +503,8 @@ def _schedule_report(deal: Deal) -> dict[str, Any]:
             "undrawn_fees": _amount_str(schedule.total_undrawn_fees),
             "repaid": _amount_str(schedule.total_repaid),
             "drawn": _amount_str(schedule.total_drawn),
+            "recapitalised": _amount_str(schedule.total_recapitalised),
+            "distributed": _amount_str(schedule.total_distributed),
             "opening_debt": _amount_str(schedule.opening_debt),
             "closing_debt": _amount_str(schedule.closing_debt),
             "closing_net_debt": _amount_str(schedule.closing_net_debt),
@@ -536,6 +544,11 @@ def _print_schedule(report: dict[str, Any]) -> None:
 
     for label, key, outflow in _SCHEDULE_ROWS:
         values = [Decimal(p[key]) for p in periods]
+        # The two event rows are silent on a deal that had no events. A row of
+        # zeroes in every column tells a reader nothing and costs them a line
+        # of attention on every schedule they ever read.
+        if key in _EVENT_ROWS and not any(values):
+            continue
         cells = [_format_money(-v if outflow else v) for v in values]
         print(row(label, cells))
         if label in ("Levered free cash flow", "Closing cash"):
