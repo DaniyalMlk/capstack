@@ -130,6 +130,21 @@
       "first_test_period": 2
     }
   ],
+  "recapitalisations": [
+    {
+      "period": 3,
+      "label": "Dividend recapitalisation",
+      "draws": [
+        {
+          "tranche": "Unitranche",
+          "amount": 80.0,
+          "issue_price": 0.995,
+          "financing_fee_rate": 0.0175
+        }
+      ],
+      "from_cash": 20.0
+    }
+  ],
   "exit": {
     "multiple": 9.75,
     "fee_rate": 0.0075,

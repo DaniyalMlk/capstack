@@ -34,6 +34,7 @@ from .debt import (
     TrancheKind,
 )
 from .drivers import Driver
+from .events import Draw, Recapitalisation, RecapitalisationError
 from .incentive import IncentiveError, OptionPool, Ratchet, Vesting
 from .money import ONE, ZERO, Money, money, safe_div
 from .operating import DEFAULT_NOL_USAGE_LIMIT, OperatingAssumptions, OperatingModel
@@ -288,6 +289,7 @@ class Deal:
     exit_fee_rate: Money = ZERO_RATE
     equity: EquityPlan = EquityPlan()
     incentive: IncentivePlan | None = None
+    recapitalisations: tuple[Recapitalisation, ...] = ()
 
     @property
     def pool(self) -> OptionPool | None:
@@ -369,14 +371,27 @@ class Deal:
                 'this deal has no capital structure; add a "structure" block and '
                 "price the tranches under \"debt\""
             )
-        return DebtSchedule.from_operating_model(
-            self.structure,
-            self.project() if model is None else model,
-            opening_cash=self.opening_cash if self.opening_cash is not None else self.cash_at_close,
-            # The certificate that sets the first period's sweep step was signed
-            # on the LTM figure the deal was priced on, not on a projection.
-            opening_ebitda=self.transaction.valuation.ltm_ebitda,
-        )
+        try:
+            return DebtSchedule.from_operating_model(
+                self.structure,
+                self.project() if model is None else model,
+                opening_cash=(
+                    self.opening_cash
+                    if self.opening_cash is not None
+                    else self.cash_at_close
+                ),
+                # The certificate that sets the first period's sweep step was
+                # signed on the LTM figure the deal was priced on, not on a
+                # projection.
+                opening_ebitda=self.transaction.valuation.ltm_ebitda,
+                recapitalisations=self.recapitalisations,
+            )
+        except RecapitalisationError as exc:
+            raise DealSpecError(f"recapitalisations: {exc}") from exc
+
+    @property
+    def has_recapitalisations(self) -> bool:
+        return bool(self.recapitalisations)
 
     @property
     def has_covenants(self) -> bool:
@@ -700,6 +715,51 @@ def _parse_security(data: Any, index: int) -> SecurityPlan:
             seniority=_whole(data, "seniority", where) or 0,
         )
     except ValueError as exc:
+        raise DealSpecError(f"{where}: {exc}") from exc
+
+
+def _parse_draw(data: Any, index: int, where: str) -> Draw:
+    """Read one incremental take-down, priced on its own terms."""
+    at = f"{where}.draws[{index}]"
+    if not isinstance(data, dict):
+        raise DealSpecError(f"{at}: expected an object")
+    try:
+        return Draw(
+            tranche=str(_require(data, "tranche", at)),
+            amount=_amount(_require(data, "amount", at), f"{at}.amount"),
+            issue_price=_optional_amount(data, "issue_price", at, default="1"),
+            financing_fee_rate=_optional_amount(data, "financing_fee_rate", at),
+        )
+    except RecapitalisationError as exc:
+        raise DealSpecError(f"{at}: {exc}") from exc
+
+
+def _parse_recapitalisation(data: Any, index: int) -> Recapitalisation:
+    """Read one mid-hold raise, and what it pays out."""
+    where = f"recapitalisations[{index}]"
+    if not isinstance(data, dict):
+        raise DealSpecError(f"{where}: expected an object")
+
+    draws_raw = data.get("draws", [])
+    if not isinstance(draws_raw, list):
+        raise DealSpecError(f"{where}.draws: expected a list of take-downs")
+
+    period_raw = _whole(data, "period", where)
+    if period_raw is None:
+        raise DealSpecError(
+            f"{where}: say which period this lands at the end of, numbered from one"
+        )
+
+    try:
+        return Recapitalisation(
+            period=period_raw,
+            draws=tuple(
+                _parse_draw(item, i, where) for i, item in enumerate(draws_raw)
+            ),
+            from_cash=_optional_amount(data, "from_cash", where),
+            label=str(data.get("label", "Dividend recapitalisation")),
+        )
+    except RecapitalisationError as exc:
         raise DealSpecError(f"{where}: {exc}") from exc
 
 
@@ -1124,6 +1184,25 @@ def parse_deal(data: dict[str, Any]) -> Deal:
             _parse_covenant(item, i, len(grid)) for i, item in enumerate(covenants_raw)
         )
 
+    recapitalisations: tuple[Recapitalisation, ...] = ()
+    recaps_raw = data.get("recapitalisations")
+    if recaps_raw is not None:
+        if not isinstance(recaps_raw, list):
+            raise DealSpecError("recapitalisations: expected a list of events")
+        if structure is None:
+            raise DealSpecError(
+                "recapitalisations: there is nothing to draw on; describe the "
+                "tranches under 'debt' and the rules under 'structure'"
+            )
+        if grid is None:
+            raise DealSpecError(
+                "recapitalisations: an event lands in a period, so a projection "
+                "is required"
+            )
+        recapitalisations = tuple(
+            _parse_recapitalisation(item, i) for i, item in enumerate(recaps_raw)
+        )
+
     exit_multiple: Money | None = None
     exit_fee_rate: Money = ZERO_RATE
     equity = EquityPlan()
@@ -1153,6 +1232,7 @@ def parse_deal(data: dict[str, Any]) -> Deal:
         exit_fee_rate=exit_fee_rate,
         equity=equity,
         incentive=incentive,
+        recapitalisations=recapitalisations,
     )
 
 
