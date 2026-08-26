@@ -35,6 +35,7 @@ from typing import NamedTuple
 
 from .daycount import DayCount, year_fraction
 from .debt import DebtSchedule
+from .incentive import IncentiveError, OptionPool, PoolOutcome, Ratchet, settle_pool
 from .money import (
     ONE,
     ZERO,
@@ -403,10 +404,41 @@ class Attribution:
         return safe_div(component, gross, default=ZERO)
 
 
+def _measured(securities: Sequence[Security], ratchet: Ratchet) -> list[int]:
+    """The securities a ratchet's hurdles are read against.
+
+    Naming nothing means the equity as a whole, which is the right reading when
+    the sponsor is the only institutional holder and the wrong one the moment a
+    rollover sits beside it. Naming an instrument that is not in the stack is an
+    error rather than an empty selection: a plan measured on nothing would clear
+    no hurdle at any price, and would do it silently.
+    """
+    if not ratchet.measured_on:
+        return list(range(len(securities)))
+    by_name = {s.name: i for i, s in enumerate(securities)}
+    missing = [name for name in ratchet.measured_on if name not in by_name]
+    if missing:
+        raise IncentiveError(
+            f"the ratchet is measured on {', '.join(repr(m) for m in missing)}, "
+            f"which {'is' if len(missing) == 1 else 'are'} not in the equity; the "
+            f"stack holds {', '.join(repr(s.name) for s in securities)}"
+        )
+    return [by_name[name] for name in ratchet.measured_on]
+
+
 def _waterfall(
-    securities: Sequence[Security], proceeds: Money, years: Money
-) -> tuple[list[Money], list[Money], list[Money]]:
-    """Distribute ``proceeds`` through the equity: preferred first, then residual."""
+    securities: Sequence[Security],
+    proceeds: Money,
+    years: Money,
+    pool: OptionPool | None = None,
+) -> tuple[list[Money], list[Money], list[Money], PoolOutcome | None]:
+    """Distribute ``proceeds`` through the equity.
+
+    Preferred claims first, then the incentive plan, then the residual. The
+    plan sits where it does because that is where it sits in the documents: it
+    is an interest in the common, so it is diluted by nothing and it dilutes
+    everything below the preferred — the sponsor's own equity included.
+    """
     accrued = [s.accrued_at(years) for s in securities]
     preferred_paid = [ZERO for _ in securities]
 
@@ -426,11 +458,30 @@ def _waterfall(
             remaining -= paid
 
     residual = max(remaining, ZERO)
+
+    settled: PoolOutcome | None = None
+    if pool is not None:
+        watched = (
+            _measured(securities, pool.ratchet) if pool.ratchet is not None else []
+        )
+        settled = settle_pool(
+            pool,
+            residual,
+            years=years,
+            measured_capital=sum((securities[i].invested for i in watched), ZERO),
+            # What the watched instruments have already taken off the top. A
+            # money multiple counts everything a holder receives, so a sponsor
+            # preferred already repaid is part of the way to its hurdle.
+            measured_prior=sum((preferred_paid[i] for i in watched), ZERO),
+            measured_ownership=sum((securities[i].ownership for i in watched), ZERO),
+        )
+        residual = settled.to_common
+
     shares = [s.ownership for s in securities]
     # Ownership is validated to sum to one, so the residual is fully distributed;
     # the allocator is still used so the last penny lands on a real holder.
     residual_paid = allocate_pro_rata(residual, [residual * s for s in shares])
-    return accrued, preferred_paid, residual_paid
+    return accrued, preferred_paid, residual_paid, settled
 
 
 @dataclass(frozen=True, slots=True)
@@ -442,6 +493,7 @@ class Outcome:
     securities: tuple[SecurityOutcome, ...]
     attribution: Attribution
     convention: DayCount = DayCount.ACT_365F
+    incentive: PoolOutcome | None = None
 
     def __len__(self) -> int:
         return len(self.securities)
@@ -466,6 +518,7 @@ class Outcome:
         exit_multiple: Numeric | None = None,
         exit_fee_rate: Numeric = 0,
         securities: Sequence[Security] | None = None,
+        incentive: OptionPool | None = None,
         convention: DayCount = DayCount.ACT_365F,
     ) -> Outcome:
         """Value the exit and run the equity through it.
@@ -473,6 +526,11 @@ class Outcome:
         ``exit_multiple`` defaults to the entry multiple. A flat-multiple case is
         the one a sponsor has to be able to defend, and it is the only one that
         does not borrow from the buyer on the way out.
+
+        ``incentive`` is the management plan. Where there is one, the returns
+        reported per security are net of it, which is the only version of them
+        worth quoting: a sponsor multiple that ignores the pool is a multiple on
+        money somebody else is going to receive.
         """
         if len(schedule) != len(model):
             raise ValueError(
@@ -503,7 +561,9 @@ class Outcome:
             )
 
         years = year_fraction(entry_date, valuation.when, convention)
-        accrued, preferred, residual = _waterfall(holders, valuation.equity_value, years)
+        accrued, preferred, residual, settled = _waterfall(
+            holders, valuation.equity_value, years, incentive
+        )
 
         rows = []
         for i, holder in enumerate(holders):
@@ -531,6 +591,7 @@ class Outcome:
             securities=tuple(rows),
             attribution=_attribute(transaction, model, schedule, valuation, holders),
             convention=convention,
+            incentive=settled,
         )
 
     # -- Deal-level figures ----------------------------------------------
@@ -569,9 +630,24 @@ class Outcome:
         ).value
 
     @property
+    def incentive_paid(self) -> Money:
+        """What the management plan took, net of the cost of exercising."""
+        return ZERO if self.incentive is None else self.incentive.paid
+
+    @property
+    def distributed(self) -> Money:
+        """Everything the equity value was split into, management included.
+
+        The strike does not appear because it cancels: management pay it in and
+        it is divided along with everything else, so the pot the holders share
+        is larger by exactly what the plan contributed to it.
+        """
+        return self.proceeds + self.incentive_paid
+
+    @property
     def distributes_everything(self) -> bool:
         """Whether the waterfall paid out exactly what there was to pay out."""
-        return is_close(self.proceeds, self.valuation.equity_value, tolerance="1E-12")
+        return is_close(self.distributed, self.valuation.equity_value, tolerance="1E-12")
 
 
 def _validate(securities: Sequence[Security]) -> None:
