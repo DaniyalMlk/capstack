@@ -779,6 +779,8 @@ def _exit_report(deal: Deal) -> dict[str, Any]:
                 "proceeds": _amount_str(row.proceeds),
                 "shortfall": _amount_str(row.shortfall),
                 "ownership": float(row.security.ownership),
+                "interim": _amount_str(row.interim),
+                "received": _amount_str(row.received),
                 "moic": None if row.moic is None else float(row.moic),
                 "irr": row.irr,
                 "irr_note": row.irr_note,
@@ -786,10 +788,23 @@ def _exit_report(deal: Deal) -> dict[str, Any]:
             for row in outcome
         ],
         "incentive": _incentive_block(outcome),
+        "distributions": [
+            {
+                "date": d.when.isoformat(),
+                "label": d.label,
+                "amount": _amount_str(d.amount),
+                "to_preferred": _amount_str(d.to_preferred),
+                "to_common": _amount_str(d.to_common),
+                "years": float(d.years),
+            }
+            for d in outcome.distributions
+        ],
         "totals": {
             "invested": _amount_str(outcome.invested),
             "proceeds": _amount_str(outcome.proceeds),
             "profit": _amount_str(outcome.profit),
+            "interim": _amount_str(outcome.interim),
+            "received": _amount_str(outcome.received),
             "moic": None if outcome.moic is None else float(outcome.moic),
             "irr": outcome.irr,
             "holding_period_years": float(outcome.holding_period_years),
@@ -840,6 +855,32 @@ _ATTRIBUTION_ROWS: tuple[tuple[str, str], ...] = (
     ("Debt paydown", "debt_paydown"),
     ("Entry and exit costs", "costs"),
 )
+
+
+def _print_distributions(blocks: list[dict[str, Any]]) -> None:
+    """Print what was paid out during the hold, and when.
+
+    The elapsed years are the column that matters. An interim distribution is
+    worth what it is worth because of when it arrived, and a table that showed
+    only the amount would be a table about the wrong thing.
+    """
+    if not blocks:
+        return
+    print("  Paid during the hold")
+    width = max(len(b["label"]) for b in blocks) + 2
+    for block in blocks:
+        print(
+            "    "
+            + block["date"]
+            + "  "
+            + block["label"].ljust(width)
+            + _format_money(Decimal(block["amount"])).rjust(13)
+            + f"{block['years']:>9.2f}y"
+        )
+    total = sum((Decimal(b["amount"]) for b in blocks), Decimal(0))
+    print("    " + "-" * (width + 34))
+    print("    " + "Total distributed".ljust(width + 12) + _format_money(total).rjust(13))
+    print()
 
 
 def _print_incentive(block: dict[str, Any] | None) -> None:
@@ -895,19 +936,33 @@ def _print_exit(report: dict[str, Any]) -> None:
     print()
 
     rows = report["securities"]
+    totals = report["totals"]
+    # The interim column only exists where something was paid before the exit.
+    # Without it the multiple would be quoted against a proceeds figure that
+    # does not produce it, which is the sort of table a reader stops trusting.
+    paid_early = any(Decimal(r["interim"]) != 0 for r in rows)
+    columns: tuple[tuple[str, str], ...] = (
+        (("invested", "invested"), ("during hold", "interim"), ("at exit", "proceeds"),
+         ("received", "received"))
+        if paid_early
+        else (("invested", "invested"), ("proceeds", "proceeds"))
+    )
+
     label_width = max(max(len(r["name"]) for r in rows), len("Total")) + 2
+    ruler = label_width + 13 * (len(columns) + 2)
     print("  Equity")
     print(
         "    "
         + "".ljust(label_width)
-        + "".join(h.rjust(13) for h in ("invested", "proceeds", "MoIC", "IRR"))
+        + "".join(h.rjust(13) for h, _ in columns)
+        + "MoIC".rjust(13)
+        + "IRR".rjust(13)
     )
     for row in rows:
         print(
             "    "
             + row["name"].ljust(label_width)
-            + _format_money(Decimal(row["invested"])).rjust(13)
-            + _format_money(Decimal(row["proceeds"])).rjust(13)
+            + "".join(_format_money(Decimal(row[key])).rjust(13) for _, key in columns)
             + (_NO_RATIO if row["moic"] is None else f"{row['moic']:.2f}x").rjust(13)
             + (_NO_RATIO if row["irr"] is None else f"{row['irr']:.1%}").rjust(13)
         )
@@ -916,19 +971,18 @@ def _print_exit(report: dict[str, Any]) -> None:
                 f"      unpaid preferred claim of "
                 f"{_format_money(Decimal(row['shortfall']))}"
             )
-    totals = report["totals"]
-    print("    " + "-" * (label_width + 52))
+    print("    " + "-" * ruler)
     print(
         "    "
         + "Total".ljust(label_width)
-        + _format_money(Decimal(totals["invested"])).rjust(13)
-        + _format_money(Decimal(totals["proceeds"])).rjust(13)
+        + "".join(_format_money(Decimal(totals[key])).rjust(13) for _, key in columns)
         + (_NO_RATIO if totals["moic"] is None else f"{totals['moic']:.2f}x").rjust(13)
         + (_NO_RATIO if totals["irr"] is None else f"{totals['irr']:.1%}").rjust(13)
     )
     print(f"    over {totals['holding_period_years']:.2f} years")
     print()
 
+    _print_distributions(report["distributions"])
     _print_incentive(report["incentive"])
 
     attribution = report["attribution"]
