@@ -1,0 +1,213 @@
+{
+  "name": "Project Thornbury",
+  "close_date": "2026-12-31",
+  "entry": {
+    "ltm_ebitda": 48.0,
+    "multiple": 10.5,
+    "existing_debt": 55.0,
+    "existing_cash": 9.0
+  },
+  "debt": [
+    {
+      "name": "Revolving credit facility",
+      "kind": "revolver",
+      "face": 0.0,
+      "commitment": 35.0,
+      "financing_fee_rate": 0.0075,
+      "cash_rate": 0.0325,
+      "undrawn_fee": 0.005
+    },
+    {
+      "name": "Term Loan B",
+      "kind": "term_loan",
+      "face": 235.0,
+      "issue_price": 0.995,
+      "financing_fee_rate": 0.0225,
+      "cash_rate": 0.045,
+      "floor": 0.01,
+      "amortisation": 0.01,
+      "maturity": 7
+    },
+    {
+      "name": "Acquisition facility",
+      "kind": "term_loan",
+      "face": 0.0,
+      "cash_rate": 0.05,
+      "floor": 0.01,
+      "maturity": 7
+    }
+  ],
+  "rollover_equity": 18.0,
+  "cash_from_balance_sheet": 6.0,
+  "cash_to_balance_sheet": 12.0,
+  "transaction_fee_rate": 0.0175,
+  "target": {
+    "total_assets": 395.0,
+    "total_liabilities": 168.0,
+    "goodwill": 74.0,
+    "step_up": 35.0,
+    "step_up_tax_rate": 0.25
+  },
+  "structure": {
+    "minimum_cash": 10.0,
+    "base_rate": {
+      "ramp": [
+        0.0405,
+        0.029
+      ]
+    },
+    "day_count": "ACT/360",
+    "interest_basis": "average",
+    "sweep_grid": {
+      "steps": [
+        [
+          5.0,
+          0.75
+        ],
+        [
+          4.0,
+          0.5
+        ],
+        [
+          3.0,
+          0.25
+        ]
+      ],
+      "floor": 0.0,
+      "net": true
+    }
+  },
+  "projection": {
+    "years": 5,
+    "frequency": "annual"
+  },
+  "operating": {
+    "opening_revenue": 320.0,
+    "revenue_growth": {
+      "ramp": [
+        0.055,
+        0.03
+      ]
+    },
+    "ebitda_margin": {
+      "ramp": [
+        0.15,
+        0.175
+      ]
+    },
+    "da_rate": {
+      "constant": 0.028
+    },
+    "capex_rate": {
+      "constant": 0.025
+    },
+    "nwc_rate": {
+      "constant": 0.06
+    },
+    "tax_rate": 0.25,
+    "opening_carryforward": 0.0
+  },
+  "acquisitions": [
+    {
+      "period": 1,
+      "label": "Halloway",
+      "ebitda": 6.5,
+      "revenue": 42.0,
+      "multiple": 6.75,
+      "synergies": 0.9,
+      "synergy_phase_in": 2,
+      "fee_rate": 0.015,
+      "integration_cost": 1.2,
+      "draws": [
+        {
+          "tranche": "Acquisition facility",
+          "amount": 44.0,
+          "issue_price": 0.995,
+          "financing_fee_rate": 0.02
+        }
+      ]
+    },
+    {
+      "period": 2,
+      "label": "Ferrand Group",
+      "ebitda": 8.0,
+      "revenue": 50.0,
+      "multiple": 7.0,
+      "synergies": 1.2,
+      "synergy_phase_in": 2,
+      "fee_rate": 0.015,
+      "integration_cost": 1.5,
+      "draws": [
+        {
+          "tranche": "Acquisition facility",
+          "amount": 56.0,
+          "issue_price": 0.995,
+          "financing_fee_rate": 0.02
+        }
+      ]
+    },
+    {
+      "period": 3,
+      "label": "Calder Services",
+      "ebitda": 5.5,
+      "revenue": 30.0,
+      "multiple": 6.25,
+      "synergies": 0.7,
+      "fee_rate": 0.015,
+      "integration_cost": 0.8,
+      "draws": [
+        {
+          "tranche": "Acquisition facility",
+          "amount": 33.0,
+          "issue_price": 0.995,
+          "financing_fee_rate": 0.02
+        }
+      ]
+    }
+  ],
+  "covenants": [
+    {
+      "name": "Total net leverage",
+      "measure": "net_leverage",
+      "threshold": {
+        "values": [
+          5.75,
+          5.5,
+          5.0,
+          4.5,
+          4.0
+        ]
+      },
+      "first_test_period": 2
+    },
+    {
+      "name": "Interest coverage",
+      "measure": "interest_coverage",
+      "threshold": {
+        "ramp": [
+          2.0,
+          2.75
+        ]
+      },
+      "first_test_period": 2
+    }
+  ],
+  "exit": {
+    "multiple": 10.5,
+    "fee_rate": 0.0075,
+    "equity": [
+      {
+        "name": "Sponsor equity",
+        "kind": "common",
+        "of": "sponsor",
+        "ownership": 0.9
+      },
+      {
+        "name": "Management rollover",
+        "kind": "common",
+        "of": "rollover",
+        "ownership": 0.1
+      }
+    ]
+  }
+}
