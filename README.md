@@ -23,9 +23,10 @@ assumption, and the committee memo that assembles all of it), together with the
 management incentive plan that sits between the preferred and the common — an
 option pool with a strike, a vesting schedule, and a ratchet that steps with the
 sponsor's own return — the dividend recapitalisation, which raises debt part-way
-through a hold and pays it straight out to the shareholders, and the add-on
+through a hold and pays it straight out to the shareholders, the add-on
 acquisition, which buys earnings during the hold and blends them into the entry
-multiple. See [ROADMAP.md](ROADMAP.md).
+multiple, and the refinancing, which retires a facility early and reports
+whether the lower coupon covered the premium. See [ROADMAP.md](ROADMAP.md).
 
 ## Install
 
@@ -450,6 +451,39 @@ $ capstack report examples/thornbury.json
     own growth has to carry that share too.
 ```
 
+A facility taken out early is described under `refinancings`, and the memo
+reports the trade rather than the new coupon:
+
+```console
+$ capstack report examples/thornbury.json
+  ...
+  Refinanced during the hold
+  --------------------------
+
+  200.9 of paper was retired early at a cash cost of 4.9. The lower coupon
+  does not earn back that over the hold that remains: 2.5 of interest saved.
+  A further 2.4 of capitalised fees was written off, which is a charge
+  against earnings and not against cash.
+
+    Face retired early                 200.9
+    Face of the new paper              195.0
+    Call premiums paid                   2.0
+    Cost of the exercise                 4.9   premium, fees and discount
+    Interest saved over the remainder    2.5   undiscounted, before amortisation
+    Fees written off                     2.4   non-cash; no balance here moves
+
+    Term Loan B repricing took 200.9 out at 7.7% and replaced it at 6.4%,
+    saving 2.5 a period with 1 of them left. Over that remainder the saving
+    does not cover what it cost: 2.5 against 4.9.
+```
+
+That verdict is the reason the section exists. A repricing is always attractive
+stated as a spread — 130 basis points off the coupon — and this one still does
+not clear, because the premium and the fees are paid at once while the saving
+arrives a period at a time and there is only one period left. The example ships
+with a decision the model argues against, which is more useful than one where
+everything works.
+
 Two assumptions at a time, with the deal rebuilt and re-run per cell:
 
 ```console
@@ -626,6 +660,31 @@ the argument go away. Phasing is explicit for the same reason: an add-on that
 pays for itself in year one and one that pays for itself in year three are
 different deals, and underwriting the first when the second is what happens is
 how a roll-up gets into trouble.
+
+**A refinancing is judged on the hold that remains, not on the spread.** The
+premium and the fees on the new paper are paid at once; the lower coupon arrives
+a period at a time. Two years from an exit there is frequently not enough left
+of the hold to earn back what the exercise cost, and a model reporting the new
+coupon without that comparison has made the case for something it never tested.
+The saving is deliberately struck on the balance retired and before amortisation
+and the sweep reduce it, which makes it an upper bound — the direction a cost
+comparison should err in.
+
+**Unamortised financing fees written off are reported, and reported apart from
+anything that is cash.** The fees on the original paper were capitalised at
+close and written down over its life; retiring it early charges whatever is
+left in one go. Nothing moves in the bank account, no balance in this engine
+changes and the return does not shift by a basis point — which is exactly why
+it has to sit outside the cash cost rather than inside it. It is reported at all
+because it is real in a real set of accounts, and a reader who meets the number
+for the first time somewhere else has been failed by the model.
+
+**A takeout repays before it draws.** The order only shows when the new paper is
+the same facility at a new price, and then it decides the answer: repaying first
+makes a repricing net to the difference, while drawing first carries both
+balances for an instant and reports a figure the credit agreement never showed.
+The balance retired is the one left after the period's own amortisation and
+sweep have run, because that is the balance the notice would be served on.
 
 **A ratchet is written as marginal bands, because the obvious reading is
 circular.** A management pool that steps up as the sponsor clears hurdles is the

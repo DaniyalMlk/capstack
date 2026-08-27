@@ -45,6 +45,20 @@ yet is a forecast wearing the clothes of a fact; both are reported. And fees are
 held out of the multiple but not out of the capital deployed, because a multiple
 is quoted on enterprise value while the cheque is written for rather more than
 that.
+
+A refinancing changes neither the business nor who holds the equity. It changes
+the price of money already borrowed, for whatever part of the hold remains, and
+it is one of the few things a sponsor still controls after signing. The trade is
+a cash cost now — a call premium, and the fees on the new paper — against a
+lower coupon later, and whether it clears is arithmetic anybody can check.
+
+The write-off of unamortised financing fees is the part most often reported
+wrongly. It is not cash. The fees on the original paper were capitalised at
+close and written down over its life; taking that paper out early charges
+whatever is left in one go. No balance in this model moves and no return
+changes. It is reported anyway, and reported separately from the cash cost,
+because it is a real charge in a real set of accounts and because netting it
+into a cash figure is precisely the error that separation prevents.
 """
 
 from __future__ import annotations
@@ -65,6 +79,9 @@ __all__ = [
     "Recapitalisation",
     "RecapitalisationError",
     "RecapitalisationOutcome",
+    "Refinancing",
+    "RefinancingError",
+    "RefinancingOutcome",
 ]
 
 
@@ -658,3 +675,214 @@ class BlendedEntry:
     def acquired_share(self) -> Money:
         """Share of the combined entry earnings that was bought rather than built."""
         return safe_div(self.acquired_ebitda, self.ebitda, default=ZERO)
+
+
+class RefinancingError(ValueError):
+    """The takeout as described cannot be funded or cannot be applied."""
+
+
+@dataclass(frozen=True, slots=True)
+class Refinancing:
+    """An existing facility repaid in full and replaced with new paper.
+
+    The event a sponsor reaches for when the market improves. Nothing about the
+    business changes and nothing reaches the shareholders; what changes is the
+    coupon on the money already borrowed, for the periods that remain.
+
+    ``into`` may draw on the tranche being taken out, which is a repricing of
+    the same facility, or on a different one, which is a genuine refinancing
+    into new paper. Both are the same arithmetic: the old balance goes to zero
+    and the new draws land, in that order, so a same-tranche takeout nets to the
+    difference rather than doubling the balance for an instant.
+
+    Two costs make a refinancing something other than free, and they behave
+    differently enough that reporting one without the other is misleading.
+
+    The *call premium* is cash. Non-call protection is what the original lenders
+    were paid for taking the risk that this would happen, and it is charged on
+    the balance repaid at the moment it is repaid.
+
+    The *unamortised financing fees* are not cash. The fees on the original
+    paper were capitalised at close and written down over its life; taking the
+    paper out early writes off whatever is left in a single charge. Nothing
+    moves in the bank account, no balance in this model changes, and the return
+    does not shift by a basis point — but it is a real charge in a real set of
+    accounts, and a model that never mentions it leaves its reader to discover
+    the number from somebody else.
+    """
+
+    period: int
+    tranche: str
+    into: tuple[Draw, ...] = ()
+    call_premium_rate: Money = ZERO
+    unamortised_fees: Money = ZERO
+    label: str = "Refinancing"
+
+    @classmethod
+    def of(
+        cls,
+        period: int,
+        tranche: str,
+        into: Sequence[Draw] = (),
+        *,
+        call_premium_rate: Numeric = 0,
+        unamortised_fees: Numeric = 0,
+        label: str = "Refinancing",
+    ) -> Refinancing:
+        return cls(
+            period=int(period),
+            tranche=tranche,
+            into=tuple(into),
+            call_premium_rate=money(call_premium_rate),
+            unamortised_fees=money(unamortised_fees),
+            label=label,
+        )
+
+    def __post_init__(self) -> None:
+        if self.period < 1:
+            raise RefinancingError(
+                f"periods are numbered from one, so period {self.period} is not one "
+                f"of them"
+            )
+        if not self.tranche.strip():
+            raise RefinancingError("a refinancing has to name the facility it takes out")
+        if not self.label.strip():
+            raise RefinancingError("a refinancing needs a label")
+        if not (0 <= self.call_premium_rate < 1):
+            raise RefinancingError(
+                f"{self.label}: a call premium of {self.call_premium_rate} of the "
+                f"balance is not a premium"
+            )
+        if self.unamortised_fees < 0:
+            raise RefinancingError(
+                f"{self.label}: a negative write-off is a credit, not a cost"
+            )
+        names = [d.tranche for d in self.into]
+        if len(names) != len(set(names)):
+            raise RefinancingError(
+                "each tranche can be drawn once per refinancing; combine the amounts "
+                "rather than listing the tranche twice"
+            )
+
+    def __len__(self) -> int:
+        return len(self.into)
+
+    def __iter__(self) -> Iterator[Draw]:
+        return iter(self.into)
+
+    @property
+    def face(self) -> Money:
+        """Face of the new paper, which is what the leverage will carry."""
+        return sum((d.amount for d in self.into), ZERO)
+
+    @property
+    def financing_fees(self) -> Money:
+        return sum((d.fees for d in self.into), ZERO)
+
+    @property
+    def discount(self) -> Money:
+        return sum((d.discount for d in self.into), ZERO)
+
+    @property
+    def proceeds(self) -> Money:
+        """What the new paper delivers, after the discount and the fees on it."""
+        return sum((d.net_proceeds for d in self.into), ZERO)
+
+    def premium_on(self, balance: Money) -> Money:
+        return balance * self.call_premium_rate
+
+    def uses(self, balance: Money) -> Money:
+        """The balance being retired, plus what it costs to retire it early."""
+        return balance + self.premium_on(balance)
+
+    def from_cash(self, balance: Money) -> Money:
+        """The plug, on the same terms as every other event in this module.
+
+        Negative when the new paper raises more than the old balance and its
+        premium, which is an upsizing rather than a refinancing and leaves the
+        surplus on the balance sheet.
+        """
+        return self.uses(balance) - self.proceeds
+
+    def draw_on(self, tranche: str) -> Money:
+        for draw in self.into:
+            if draw.tranche == tranche:
+                return draw.amount
+        return ZERO
+
+
+@dataclass(frozen=True, slots=True)
+class RefinancingOutcome:
+    """A refinancing as it actually landed in the schedule."""
+
+    event: Refinancing
+    index: int
+    repaid: Money
+    cash_before: Money
+    cash_after: Money
+    old_rate: Money = ZERO
+    new_rate: Money = ZERO
+    periods_remaining: int = 0
+
+    @property
+    def label(self) -> str:
+        return self.event.label
+
+    @property
+    def call_premium(self) -> Money:
+        return self.event.premium_on(self.repaid)
+
+    @property
+    def face(self) -> Money:
+        return self.event.face
+
+    @property
+    def from_cash(self) -> Money:
+        return self.event.from_cash(self.repaid)
+
+    @property
+    def fees_written_off(self) -> Money:
+        return self.event.unamortised_fees
+
+    @property
+    def cash_cost(self) -> Money:
+        """What the exercise takes out of the business.
+
+        The premium, the fees on the new paper and the discount it clears at.
+        The write-off is deliberately not here: it is a charge against reported
+        earnings and nothing else, and adding it to a cash cost would be the
+        error this separation exists to prevent.
+        """
+        return self.call_premium + self.event.financing_fees + self.event.discount
+
+    @property
+    def spread_saved(self) -> Money:
+        """Coupon given up, in rate terms. Negative if the new paper is dearer."""
+        return self.old_rate - self.new_rate
+
+    @property
+    def annual_saving(self) -> Money:
+        """Interest saved in a full period, on the balance that was refinanced.
+
+        Struck on the old balance rather than the new face, so an upsizing does
+        not report the cost of the extra money it borrowed as a saving on the
+        money it already owed.
+        """
+        return self.repaid * self.spread_saved
+
+    @property
+    def saving_over_the_remainder(self) -> Money:
+        """That saving across the periods left in the projection.
+
+        An undiscounted sum, and read as an order of magnitude rather than a
+        valuation: it ignores the amortisation and the sweep that will reduce
+        the balance it is struck on, both of which cut it. What it answers is
+        whether the exercise was worth its cash cost at all, which is a
+        comparison the premium and this figure can settle between them.
+        """
+        return self.annual_saving * money(self.periods_remaining)
+
+    @property
+    def pays_back(self) -> bool:
+        """Whether the interest saved covers what the exercise cost in cash."""
+        return self.saving_over_the_remainder > self.cash_cost

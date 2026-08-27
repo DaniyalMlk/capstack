@@ -49,6 +49,9 @@ from .events import (
     Recapitalisation,
     RecapitalisationError,
     RecapitalisationOutcome,
+    Refinancing,
+    RefinancingError,
+    RefinancingOutcome,
 )
 from .money import (
     ONE,
@@ -586,15 +589,18 @@ class TranchePeriod:
     closing: Money
     recapitalisation: Money = ZERO
     acquisition: Money = ZERO
+    refinancing_draw: Money = ZERO
+    refinancing_repayment: Money = ZERO
 
     @property
     def incremental_draw(self) -> Money:
         """Face taken down at the period boundary, whatever it funded.
 
-        Split by purpose in the two fields above rather than carried as one
-        number, because a reader of the schedule wants to know whether a tranche
-        grew to pay the shareholders or to buy something."""
-        return self.recapitalisation + self.acquisition
+        Split by purpose rather than carried as one number, because a reader of
+        the schedule wants to know whether a tranche grew to pay the
+        shareholders, to buy something, or to replace paper priced in a worse
+        market."""
+        return self.recapitalisation + self.acquisition + self.refinancing_draw
 
     @property
     def total_repayment(self) -> Money:
@@ -620,6 +626,7 @@ class TranchePeriod:
             - self.mandatory_repayment
             - self.sweep_repayment
             + self.incremental_draw
+            - self.refinancing_repayment
         )
         return is_close(self.closing, expected, tolerance=tolerance)
 
@@ -646,6 +653,9 @@ class DebtPeriod:
     distribution_from_cash: Money = ZERO
     acquisition_spend: Money = ZERO
     acquisition_from_cash: Money = ZERO
+    call_premium: Money = ZERO
+    fees_written_off: Money = ZERO
+    refinancing_from_cash: Money = ZERO
 
     @property
     def index(self) -> int:
@@ -700,8 +710,18 @@ class DebtPeriod:
         return sum((t.acquisition for t in self.tranches), ZERO)
 
     @property
+    def refinanced(self) -> Money:
+        """Face retired early at the period boundary."""
+        return sum((t.refinancing_repayment for t in self.tranches), ZERO)
+
+    @property
+    def refinancing_draw(self) -> Money:
+        """Face of the paper that replaced it."""
+        return sum((t.refinancing_draw for t in self.tranches), ZERO)
+
+    @property
     def incremental_draw(self) -> Money:
-        return self.recapitalisation + self.acquisition_debt
+        return self.recapitalisation + self.acquisition_debt + self.refinancing_draw
 
     @property
     def cash_cost_of_debt(self) -> Money:
@@ -743,6 +763,7 @@ class DebtPeriod:
             + self.funding_shortfall
             - self.distribution_from_cash
             - self.acquisition_from_cash
+            - self.refinancing_from_cash
         )
         return is_close(self.closing_cash, expected, tolerance=tolerance)
 
@@ -784,6 +805,142 @@ def _by_period(
                 )
         scheduled[event.period] = event
     return scheduled
+
+
+def _refinancings_by_period(
+    events: Sequence[Refinancing],
+    structure: CapitalStructure,
+    span: int,
+    taken: frozenset[int],
+) -> dict[int, Refinancing]:
+    """Index the takeouts by period, checking what can be checked in advance.
+
+    Whether there is anything left outstanding to retire cannot be checked here
+    — it depends on how fast the sweep has run — so that one waits for the
+    schedule. Everything else fails before twenty periods of arithmetic rather
+    than in the middle of them.
+    """
+    known = {t.name for t in structure.tranches}
+    scheduled: dict[int, Refinancing] = {}
+    for event in events:
+        if event.period > span:
+            raise RefinancingError(
+                f"{event.label}: period {event.period} is beyond the {span} periods "
+                f"the schedule covers"
+            )
+        if event.period in scheduled:
+            raise RefinancingError(
+                f"two refinancings land at the end of period {event.period}; "
+                f"combine them into one"
+            )
+        if event.period in taken:
+            raise RefinancingError(
+                f"{event.label}: another event already lands at the end of period "
+                f"{event.period}; two things happening at the same instant cannot "
+                f"say which came first, and the balance they each act on differs "
+                f"by which"
+            )
+        for name in (event.tranche, *(d.tranche for d in event.into)):
+            if name not in known:
+                raise RefinancingError(
+                    f"{event.label}: there is no tranche named {name!r}; the "
+                    f"structure holds {', '.join(repr(n) for n in sorted(known))}"
+                )
+        if structure.tranche(event.tranche).is_revolving:
+            raise RefinancingError(
+                f"{event.label}: {event.tranche} is a revolver, which the schedule "
+                f"already repays and redraws every period; refinancing it says "
+                f"nothing the sweep has not said"
+            )
+        scheduled[event.period] = event
+    return scheduled
+
+
+def _refinance(
+    structure: CapitalStructure,
+    row: DebtPeriod,
+    event: Refinancing,
+    *,
+    index: int,
+    span: int,
+) -> tuple[DebtPeriod, RefinancingOutcome]:
+    """Retire a facility at the end of a solved period and draw its replacement.
+
+    The order is repay then draw, which matters when the new paper is the same
+    facility at a new price: a repricing nets to the difference rather than
+    carrying both balances for an instant, and a same-tranche takeout that drew
+    first would report a balance the credit agreement never showed.
+
+    The balance retired is the one left after the period's own amortisation and
+    sweep have run, because that is the balance the notice would be served on.
+    """
+    balance = row.tranche(event.tranche).closing
+    if balance <= 0:
+        raise RefinancingError(
+            f"{event.label}: {event.tranche} has nothing outstanding at the end of "
+            f"period {event.period}, so there is nothing to refinance"
+        )
+
+    from_cash = event.from_cash(balance)
+    available = row.closing_cash - structure.minimum_cash
+    if from_cash > available:
+        raise RefinancingError(
+            f"{event.label}: retiring {balance} at a premium needs {from_cash} off a "
+            f"balance sheet holding {row.closing_cash} against a minimum of "
+            f"{structure.minimum_cash}, which leaves only {available}; raise more on "
+            f"the new paper or move the takeout later"
+        )
+
+    base = structure.base_at(index)
+    old = structure.tranche(event.tranche)
+    old_rate = old.rate_at(base) + old.pik_rate
+    new_rate = ZERO
+    if event.face > 0:
+        weighted = sum(
+            (
+                d.amount
+                * (
+                    structure.tranche(d.tranche).rate_at(base)
+                    + structure.tranche(d.tranche).pik_rate
+                )
+                for d in event.into
+            ),
+            ZERO,
+        )
+        new_rate = safe_div(weighted, event.face, default=ZERO)
+
+    tranches = tuple(
+        replace(
+            t,
+            refinancing_repayment=balance if t.name == event.tranche else ZERO,
+            refinancing_draw=event.draw_on(t.name),
+            closing=(
+                t.closing
+                - (balance if t.name == event.tranche else ZERO)
+                + event.draw_on(t.name)
+            ),
+        )
+        for t in row.tranches
+    )
+    cash_after = row.closing_cash - from_cash
+    updated = replace(
+        row,
+        tranches=tranches,
+        closing_cash=cash_after,
+        call_premium=event.premium_on(balance),
+        fees_written_off=event.unamortised_fees,
+        refinancing_from_cash=from_cash,
+    )
+    return updated, RefinancingOutcome(
+        event=event,
+        index=index,
+        repaid=balance,
+        cash_before=row.closing_cash,
+        cash_after=cash_after,
+        old_rate=old_rate,
+        new_rate=new_rate,
+        periods_remaining=span - event.period,
+    )
 
 
 def _acquisitions_by_period(
@@ -968,6 +1125,7 @@ class DebtSchedule:
     opening_cash: Money
     recapitalisations: tuple[RecapitalisationOutcome, ...] = ()
     acquisitions: tuple[AddOnOutcome, ...] = ()
+    refinancings: tuple[RefinancingOutcome, ...] = ()
 
     def __len__(self) -> int:
         return len(self.periods)
@@ -990,6 +1148,7 @@ class DebtSchedule:
         opening_ebitda: Numeric | None = None,
         recapitalisations: Sequence[Recapitalisation] = (),
         acquisitions: Sequence[AddOn] = (),
+        refinancings: Sequence[Refinancing] = (),
     ) -> DebtSchedule:
         """Roll the structure forward, one period at a time.
 
@@ -1025,6 +1184,12 @@ class DebtSchedule:
         purchases = _acquisitions_by_period(
             acquisitions or (), structure, len(periods), scheduled
         )
+        takeouts = _refinancings_by_period(
+            refinancings or (),
+            structure,
+            len(periods),
+            frozenset(scheduled) | frozenset(purchases),
+        )
 
         balances = {t.name: t.face for t in structure.tranches}
         cash = money(opening_cash)
@@ -1034,6 +1199,7 @@ class DebtSchedule:
         rows: list[DebtPeriod] = []
         applied_events: list[RecapitalisationOutcome] = []
         applied_purchases: list[AddOnOutcome] = []
+        applied_takeouts: list[RefinancingOutcome] = []
         for i, period in enumerate(periods):
             certified: Money | None = None
             rate = structure.sweep_rate
@@ -1085,6 +1251,13 @@ class DebtSchedule:
                 )
                 applied_purchases.append(bought)
 
+            takeout = takeouts.get(period.index)
+            if takeout is not None:
+                row, retired = _refinance(
+                    structure, row, takeout, index=i, span=len(periods)
+                )
+                applied_takeouts.append(retired)
+
             rows.append(row)
             balances = {t.name: t.closing for t in row.tranches}
             cash = row.closing_cash
@@ -1095,6 +1268,7 @@ class DebtSchedule:
             opening_cash=money(opening_cash),
             recapitalisations=tuple(applied_events),
             acquisitions=tuple(applied_purchases),
+            refinancings=tuple(applied_takeouts),
         )
 
     @classmethod
@@ -1107,6 +1281,7 @@ class DebtSchedule:
         opening_ebitda: Numeric | None = None,
         recapitalisations: Sequence[Recapitalisation] = (),
         acquisitions: Sequence[AddOn] = (),
+        refinancings: Sequence[Refinancing] = (),
     ) -> DebtSchedule:
         """Run the structure against an operating case."""
         return cls.run(
@@ -1118,6 +1293,7 @@ class DebtSchedule:
             opening_ebitda=opening_ebitda,
             recapitalisations=recapitalisations,
             acquisitions=acquisitions,
+            refinancings=refinancings,
         )
 
     # -- Aggregates ------------------------------------------------------
@@ -1162,6 +1338,20 @@ class DebtSchedule:
     def total_acquisition_from_cash(self) -> Money:
         """The share of that spend the business paid for out of its own cash."""
         return sum((p.acquisition_from_cash for p in self.periods), ZERO)
+
+    @property
+    def total_refinanced(self) -> Money:
+        """Face retired early across the hold."""
+        return sum((p.refinanced for p in self.periods), ZERO)
+
+    @property
+    def total_call_premiums(self) -> Money:
+        return sum((p.call_premium for p in self.periods), ZERO)
+
+    @property
+    def total_fees_written_off(self) -> Money:
+        """Non-cash, and reported apart from everything that is not."""
+        return sum((p.fees_written_off for p in self.periods), ZERO)
 
     @property
     def total_distributed(self) -> Money:
