@@ -29,6 +29,10 @@ from .debt import (
 )
 from .drivers import Driver
 from .events import (
+    AddOn,
+    AddOnError,
+    AddOnOutcome,
+    BlendedEntry,
     Draw,
     Recapitalisation,
     RecapitalisationError,
@@ -45,6 +49,7 @@ from .incentive import (
 )
 from .money import Money, allocate_pro_rata, money, quantize, rate, rescale
 from .operating import (
+    AcquiredStream,
     OperatingAssumptions,
     OperatingModel,
     OperatingPeriod,
@@ -108,10 +113,15 @@ from .transaction import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "AcquiredStream",
+    "AddOn",
+    "AddOnError",
+    "AddOnOutcome",
     "AmbiguousIRR",
     "Attribution",
     "Axis",
     "BalanceSheetError",
+    "BlendedEntry",
     "Breakeven",
     "CapitalStructure",
     "Case",
@@ -159,10 +169,10 @@ __all__ = [
     "PoolOutcome",
     "PurchaseAccounting",
     "Ratchet",
+    "RatchetBand",
     "Recapitalisation",
     "RecapitalisationError",
     "RecapitalisationOutcome",
-    "RatchetBand",
     "Report",
     "Section",
     "Security",
@@ -193,11 +203,11 @@ __all__ = [
     "moic",
     "money",
     "npv_periodic",
-    "settle_pool",
     "parse_deal",
     "quantize",
     "rate",
     "rescale",
+    "settle_pool",
     "solve",
     "year_fraction",
 ]
