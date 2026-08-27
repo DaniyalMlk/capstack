@@ -34,10 +34,22 @@ from .debt import (
     TrancheKind,
 )
 from .drivers import Driver
-from .events import Draw, Recapitalisation, RecapitalisationError
+from .events import (
+    AddOn,
+    AddOnError,
+    BlendedEntry,
+    Draw,
+    Recapitalisation,
+    RecapitalisationError,
+)
 from .incentive import IncentiveError, OptionPool, Ratchet, Vesting
 from .money import ONE, ZERO, Money, money, safe_div
-from .operating import DEFAULT_NOL_USAGE_LIMIT, OperatingAssumptions, OperatingModel
+from .operating import (
+    DEFAULT_NOL_USAGE_LIMIT,
+    AcquiredStream,
+    OperatingAssumptions,
+    OperatingModel,
+)
 from .outcome import Outcome, Security, SecurityKind, default_securities
 from .periods import Frequency, PeriodGrid
 from .transaction import DebtFunding, EntryValuation, LineItem, Transaction
@@ -290,6 +302,46 @@ class Deal:
     equity: EquityPlan = EquityPlan()
     incentive: IncentivePlan | None = None
     recapitalisations: tuple[Recapitalisation, ...] = ()
+    acquisitions: tuple[AddOn, ...] = ()
+
+    @property
+    def has_acquisitions(self) -> bool:
+        return bool(self.acquisitions)
+
+    @property
+    def blended_entry(self) -> BlendedEntry:
+        """The platform and its add-ons priced as a single entry.
+
+        Available whether or not the file describes any acquisitions: a deal
+        with none blends to its own multiple, which keeps every caller from
+        having to ask first.
+        """
+        valuation = self.transaction.valuation
+        return BlendedEntry(
+            platform_enterprise_value=valuation.enterprise_value,
+            platform_ebitda=valuation.ltm_ebitda,
+            add_ons=self.acquisitions,
+        )
+
+    def acquired_streams(self) -> tuple[AcquiredStream, ...]:
+        """The acquired earnings, each carried at a margin this deal implies.
+
+        An acquisition that did not state its revenue is carried at the
+        platform's margin in the period it closes — not at the margin in the
+        first projected period, and not at an average. A business bought in year
+        three is bought out of the market as it stands in year three, and by
+        then a case with a margin ramp in it is somewhere quite different from
+        where it started.
+        """
+        if not self.acquisitions or self.operating is None:
+            return ()
+        margins = self.operating.ebitda_margin
+        try:
+            return tuple(
+                a.stream(margins.at(a.period - 1)) for a in self.acquisitions
+            )
+        except AddOnError as exc:
+            raise DealSpecError(f"acquisitions: {exc}") from exc
 
     @property
     def pool(self) -> OptionPool | None:
@@ -385,9 +437,12 @@ class Deal:
                 # projection.
                 opening_ebitda=self.transaction.valuation.ltm_ebitda,
                 recapitalisations=self.recapitalisations,
+                acquisitions=self.acquisitions,
             )
         except RecapitalisationError as exc:
             raise DealSpecError(f"recapitalisations: {exc}") from exc
+        except AddOnError as exc:
+            raise DealSpecError(f"acquisitions: {exc}") from exc
 
     @property
     def has_recapitalisations(self) -> bool:
@@ -460,12 +515,18 @@ class Deal:
                 "this deal has no operating case; add \"projection\" and "
                 "\"operating\" blocks to the deal file"
             )
-        return OperatingModel.project(
-            self.grid,
-            self.operating,
-            opening_revenue=self.opening_revenue,
-            opening_net_working_capital=self.opening_net_working_capital,
-        )
+        try:
+            return OperatingModel.project(
+                self.grid,
+                self.operating,
+                opening_revenue=self.opening_revenue,
+                opening_net_working_capital=self.opening_net_working_capital,
+                acquisitions=self.acquired_streams(),
+            )
+        except ValueError as exc:
+            if isinstance(exc, DealSpecError):
+                raise
+            raise DealSpecError(f"acquisitions: {exc}") from exc
 
 
 class DealSpecError(ValueError):
@@ -760,6 +821,57 @@ def _parse_recapitalisation(data: Any, index: int) -> Recapitalisation:
             label=str(data.get("label", "Dividend recapitalisation")),
         )
     except RecapitalisationError as exc:
+        raise DealSpecError(f"{where}: {exc}") from exc
+
+
+def _parse_acquisition(data: Any, index: int, periods: int) -> AddOn:
+    """Read one business bought during the hold.
+
+    ``revenue`` is optional and its absence is meaningful rather than lazy: a
+    file that states only the earnings and the multiple is saying the business
+    is carried at the platform's own margin, which is the assumption that
+    changes the model least. Stating revenue replaces that assumption with the
+    margin the business actually earns.
+    """
+    where = f"acquisitions[{index}]"
+    if not isinstance(data, dict):
+        raise DealSpecError(f"{where}: expected an object")
+
+    period = _whole(data, "period", where)
+    if period is None:
+        raise DealSpecError(
+            f"{where}: say which period this closes at the end of, numbered from one"
+        )
+
+    draws_raw = data.get("draws", [])
+    if not isinstance(draws_raw, list):
+        raise DealSpecError(f"{where}.draws: expected a list of take-downs")
+
+    growth_raw = data.get("growth")
+    growth = (
+        None if growth_raw is None else _driver(growth_raw, periods, f"{where}.growth")
+    )
+    phase_in = _whole(data, "synergy_phase_in", where)
+
+    try:
+        return AddOn(
+            period=period,
+            ebitda=_amount(_require(data, "ebitda", where), f"{where}.ebitda"),
+            multiple=_amount(_require(data, "multiple", where), f"{where}.multiple"),
+            revenue=(
+                None
+                if data.get("revenue") is None
+                else _amount(data["revenue"], f"{where}.revenue")
+            ),
+            synergies=_optional_amount(data, "synergies", where),
+            synergy_phase_in=1 if phase_in is None else phase_in,
+            growth=growth,
+            fee_rate=_optional_amount(data, "fee_rate", where),
+            integration_cost=_optional_amount(data, "integration_cost", where),
+            draws=tuple(_parse_draw(item, i, where) for i, item in enumerate(draws_raw)),
+            label=str(data.get("label", f"Add-on {index + 1}")),
+        )
+    except (AddOnError, RecapitalisationError) as exc:
         raise DealSpecError(f"{where}: {exc}") from exc
 
 
@@ -1203,6 +1315,21 @@ def parse_deal(data: dict[str, Any]) -> Deal:
             _parse_recapitalisation(item, i) for i, item in enumerate(recaps_raw)
         )
 
+    acquisitions: tuple[AddOn, ...] = ()
+    acquisitions_raw = data.get("acquisitions")
+    if acquisitions_raw is not None:
+        if not isinstance(acquisitions_raw, list):
+            raise DealSpecError("acquisitions: expected a list of purchases")
+        if grid is None or assumptions is None:
+            raise DealSpecError(
+                "acquisitions: a purchase adds earnings to the case, so a "
+                "projection and an operating block are required"
+            )
+        acquisitions = tuple(
+            _parse_acquisition(item, i, len(grid))
+            for i, item in enumerate(acquisitions_raw)
+        )
+
     exit_multiple: Money | None = None
     exit_fee_rate: Money = ZERO_RATE
     equity = EquityPlan()
@@ -1233,6 +1360,7 @@ def parse_deal(data: dict[str, Any]) -> Deal:
         equity=equity,
         incentive=incentive,
         recapitalisations=recapitalisations,
+        acquisitions=acquisitions,
     )
 
 

@@ -25,14 +25,16 @@ sponsor is counting on it.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 
 from .drivers import Driver
 from .money import ONE, ZERO, Money, Numeric, money, safe_div
 from .periods import Period, PeriodGrid
 
 __all__ = [
+    "AcquiredStream",
     "OperatingAssumptions",
     "OperatingModel",
     "OperatingPeriod",
@@ -153,6 +155,129 @@ class OperatingAssumptions:
 
 
 @dataclass(frozen=True, slots=True)
+class AcquiredStream:
+    """Earnings bought part-way through the hold and carried from then on.
+
+    A platform that buys three businesses over five years is not the business
+    that was underwritten, and modelling it as though a bolt-on simply lifted
+    the margin loses the thing that makes buy-and-build work: the acquired
+    revenue arrives at its own margin, on a base that did not compound from
+    close, and it is paid for at a different multiple from the platform's.
+
+    So an acquisition is carried as a separate stream rather than folded into
+    the platform's revenue line. ``revenue`` and ``margin`` are the run-rate the
+    business is bought on, and both are struck at the moment it closes: the
+    stream contributes nothing to the period it is acquired in and a full
+    period's trading to every period after.
+
+    Growth defaults to the platform's own driver, which is the assumption a
+    model makes unless it has a reason not to. Passing ``growth`` states the
+    reason — a tuck-in bought precisely because it is growing faster than the
+    platform is the usual one.
+    """
+
+    period: int
+    revenue: Money
+    margin: Money
+    synergies: Money = ZERO
+    synergy_phase_in: int = 1
+    growth: Driver | None = None
+    label: str = "Add-on"
+
+    @classmethod
+    def of(
+        cls,
+        period: int,
+        *,
+        revenue: Numeric,
+        margin: Numeric,
+        synergies: Numeric = 0,
+        synergy_phase_in: int = 1,
+        growth: Driver | None = None,
+        label: str = "Add-on",
+    ) -> AcquiredStream:
+        return cls(
+            period=int(period),
+            revenue=money(revenue),
+            margin=money(margin),
+            synergies=money(synergies),
+            synergy_phase_in=int(synergy_phase_in),
+            growth=growth,
+            label=label,
+        )
+
+    def __post_init__(self) -> None:
+        if self.period < 1:
+            raise ValueError(
+                f"periods are numbered from one, so period {self.period} is not one "
+                f"of them"
+            )
+        if self.revenue <= 0:
+            raise ValueError(f"{self.label}: an acquired stream has to earn something")
+        if not (-1 < self.margin <= 1):
+            raise ValueError(
+                f"{self.label}: a margin of {self.margin} is not a share of revenue"
+            )
+        if self.synergy_phase_in < 1:
+            raise ValueError(
+                f"{self.label}: synergies phase in over at least one period"
+            )
+        if self.synergies < 0:
+            raise ValueError(
+                f"{self.label}: a negative synergy is a dis-synergy, which belongs in "
+                f"the margin the business is carried at"
+            )
+
+    @property
+    def ebitda(self) -> Money:
+        """Run-rate EBITDA at the moment of purchase, before any synergy."""
+        return self.revenue * self.margin
+
+    def _elapsed(self, index: int) -> int:
+        """Whole periods traded under ownership by the end of period ``index``."""
+        return index - (self.period - 1)
+
+    def revenue_at(self, index: int, default_growth: Driver) -> Money:
+        """Revenue contributed in period ``index``, zero-based.
+
+        Compounded from the run-rate at purchase across every period since,
+        which is why a business bought at the end of period two is at one
+        period's growth in period three rather than at its purchase run-rate.
+        """
+        elapsed = self._elapsed(index)
+        if elapsed <= 0:
+            return ZERO
+        driver = self.growth if self.growth is not None else default_growth
+        revenue = self.revenue
+        for i in range(self.period, self.period + elapsed):
+            revenue = revenue * (ONE + driver.at(i))
+        return revenue
+
+    def synergies_at(self, index: int) -> Money:
+        """Synergy realised in period ``index``, phased straight-line to run-rate.
+
+        Phasing is the difference between an add-on that pays for itself in year
+        one and one that pays for itself in year three, and underwriting the
+        first when the second is what happens is how a buy-and-build case gets
+        into trouble. The default of one period is full realisation immediately,
+        which is the right assumption only for a synergy that is a signature —
+        a duplicated licence, a lease not renewed.
+        """
+        elapsed = self._elapsed(index)
+        if elapsed <= 0 or self.synergies == 0:
+            return ZERO
+        if elapsed >= self.synergy_phase_in:
+            return self.synergies
+        return self.synergies * Decimal(elapsed) / Decimal(self.synergy_phase_in)
+
+    def ebitda_at(self, index: int, default_growth: Driver) -> Money:
+        """Everything this stream contributes to EBITDA in period ``index``."""
+        return self.revenue_at(index, default_growth) * self.margin + self.synergies_at(
+            index
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class OperatingPeriod:
     """One column of the operating case, from revenue down to cash."""
 
@@ -167,10 +292,27 @@ class OperatingPeriod:
     net_working_capital: Money
     change_in_net_working_capital: Money
     unlevered_free_cash_flow: Money
+    acquired_revenue: Money = ZERO
+    acquired_ebitda: Money = ZERO
 
     @property
     def index(self) -> int:
         return self.period.index
+
+    @property
+    def organic_revenue(self) -> Money:
+        """Revenue from the business that was bought at close.
+
+        Kept separate because the two grow for different reasons, and a case
+        that reports only the total cannot answer the one question an investment
+        committee always asks of a buy-and-build: how much of this is the
+        platform, and how much of it did we pay for again.
+        """
+        return self.revenue - self.acquired_revenue
+
+    @property
+    def organic_ebitda(self) -> Money:
+        return self.ebitda - self.acquired_ebitda
 
     @property
     def ebitda_margin(self) -> Money:
@@ -212,6 +354,7 @@ class OperatingModel:
         *,
         opening_revenue: Numeric,
         opening_net_working_capital: Numeric | None = None,
+        acquisitions: Sequence[AcquiredStream] = (),
     ) -> OperatingModel:
         """Roll the case forward across ``grid``.
 
@@ -220,12 +363,28 @@ class OperatingModel:
         base the first period's movement is measured against, and assuming a
         zero opening balance would charge the entire working-capital balance to
         period one as though the business had been founded at close.
+
+        ``acquisitions`` are earnings bought during the hold. Each one grows on
+        its own base, at its own margin, and joins the combined revenue that the
+        capital-intensity lines are then struck against — so a business acquired
+        in period two carries working capital and capital expenditure at the
+        platform's rates from period three onward. That is a simplification, and
+        the honest form of one: a bolt-on that needs materially more capital per
+        pound of revenue than the platform is a different business, and belongs
+        in the file as a second case rather than as a line in this one.
         """
         revenue = money(opening_revenue)
         if revenue < 0:
             raise ValueError("opening revenue must not be negative")
 
         count = len(grid)
+        streams = tuple(acquisitions)
+        for stream in streams:
+            if stream.period > count:
+                raise ValueError(
+                    f"{stream.label}: closes at the end of period {stream.period}, "
+                    f"which is beyond the {count} periods the case covers"
+                )
         nwc = (
             money(opening_net_working_capital)
             if opening_net_working_capital is not None
@@ -233,13 +392,27 @@ class OperatingModel:
         )
         opening_nwc = nwc
         carryforward = assumptions.opening_carryforward
+        organic = revenue
 
         rows: list[OperatingPeriod] = []
         for i in range(count):
             period = grid[i]
 
-            revenue = revenue * (ONE + assumptions.revenue_growth.at(i))
-            ebitda = revenue * assumptions.ebitda_margin.at(i)
+            # The organic base is what carries forward. Acquired revenue is
+            # added to the period's total but never to the base, because each
+            # stream compounds from its own purchase run-rate; folding it back
+            # in would grow it a second time next period.
+            organic = organic * (ONE + assumptions.revenue_growth.at(i))
+            acquired_revenue = ZERO
+            acquired_ebitda = ZERO
+            for stream in streams:
+                contributed = stream.revenue_at(i, assumptions.revenue_growth)
+                acquired_revenue += contributed
+                acquired_ebitda += contributed * stream.margin + stream.synergies_at(i)
+
+            revenue = organic + acquired_revenue
+            ebitda = organic * assumptions.ebitda_margin.at(i) + acquired_ebitda
+
             da = revenue * assumptions.da_rate.at(i)
             ebit = ebitda - da
 
@@ -275,6 +448,8 @@ class OperatingModel:
                     net_working_capital=closing_nwc,
                     change_in_net_working_capital=change_in_nwc,
                     unlevered_free_cash_flow=ufcf,
+                    acquired_revenue=acquired_revenue,
+                    acquired_ebitda=acquired_ebitda,
                 )
             )
 
@@ -319,3 +494,23 @@ class OperatingModel:
     @property
     def closing_carryforward(self) -> Money:
         return self.periods[-1].tax.closing_carryforward
+
+    @property
+    def has_acquisitions(self) -> bool:
+        return any(p.acquired_revenue != 0 for p in self.periods)
+
+    @property
+    def exit_acquired_ebitda(self) -> Money:
+        """The share of the earnings that price the exit which was bought.
+
+        The uncomfortable number in a buy-and-build, and the one worth putting
+        next to the exit multiple: earnings bought at eight turns and sold at
+        eleven are worth having, but they are not the same achievement as
+        earnings grown from the platform, and the bridge should not pretend
+        otherwise.
+        """
+        return self.periods[-1].acquired_ebitda
+
+    @property
+    def organic_exit_ebitda(self) -> Money:
+        return self.periods[-1].organic_ebitda

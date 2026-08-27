@@ -163,6 +163,8 @@ def prepare(deal: Deal, *, breakevens: bool = True) -> Report:
     if case.covenants is not None:
         sections.append(_covenants(case.covenants))
     sections.append(_exit(case.outcome))
+    if deal.has_acquisitions:
+        sections.append(_acquisitions(deal, case))
     if case.outcome.was_recapitalised:
         sections.append(_recapitalisation(deal, case))
     if case.outcome.incentive is not None:
@@ -526,6 +528,110 @@ def _exit(outcome: Outcome) -> Section:
             headings=("Security", "Kind", "Invested", "Proceeds", "MoIC", "IRR"),
             rows=tuple(rows),
             align=("l", "l", "r", "r", "r", "r"),
+        ),
+        notes=tuple(notes),
+    )
+
+
+def _acquisitions(deal: Deal, case: Case) -> Section:
+    """What was bought, what it blended the entry down to, and whether it paid.
+
+    The counterfactual is the platform on its own — same structure, same
+    operating case, no purchases — and it is the only way to answer the question
+    the strategy is judged on. A buy-and-build reported against itself always
+    looks good: earnings went up. Reported against the platform it was built on,
+    it has to show that the earnings arrived for less than they were worth, that
+    the debt raised to buy them was serviced, and that what is left over after
+    both is larger than doing nothing.
+
+    Not every roll-up clears that. One that buys three turns below its own
+    multiple and spends two of them on fees, interest and integration has
+    created a bigger business and a worse return, and this is the section where
+    that becomes visible.
+    """
+    blended = deal.blended_entry
+    schedule = case.schedule
+    outcome = case.outcome
+
+    platform = Case.run(dataclasses.replace(deal, acquisitions=()))
+    moved_moic = _delta_multiple(outcome.moic, platform.outcome.moic)
+    moved_irr = _delta_rate(outcome.irr, platform.outcome.irr)
+
+    rows = tuple(
+        (
+            add_on.label,
+            f"P{add_on.period}",
+            _amount(add_on.ebitda),
+            _multiple(add_on.multiple),
+            _amount(add_on.enterprise_value),
+            _amount(add_on.face),
+            _amount(add_on.from_cash),
+        )
+        for add_on in deal.acquisitions
+    )
+
+    lines = [
+        Line("Businesses acquired", str(len(deal.acquisitions))),
+        Line("EBITDA acquired", _amount(blended.acquired_ebitda), "run-rate at purchase"),
+        Line("Enterprise value paid", _amount(blended.acquired_enterprise_value)),
+        Line(
+            "Capital deployed",
+            _amount(blended.capital_deployed),
+            "platform and add-ons, fees included",
+        ),
+        Line("Funded with new debt", _amount(schedule.total_acquisition_debt)),
+        Line("Funded from cash", _amount(schedule.total_acquisition_from_cash)),
+        Line("Platform multiple", _multiple(blended.platform_multiple)),
+        Line("Blended multiple", _multiple(blended.blended_multiple)),
+        Line(
+            "After synergies",
+            _multiple(blended.synergised_multiple),
+            "earnings not yet earned",
+        ),
+        Line("On capital deployed", _multiple(blended.all_in_multiple)),
+        Line("Money multiple, as run", _multiple(outcome.moic)),
+        Line("Money multiple, platform alone", _multiple(platform.outcome.moic)),
+        Line("Rate of return, as run", _rate(outcome.irr)),
+        Line("Rate of return, platform alone", _rate(platform.outcome.irr)),
+    ]
+
+    acquired = case.model.exit_acquired_ebitda
+    notes = [
+        f"{_amount(acquired)} of the {_amount(case.model.exit_ebitda)} of EBITDA "
+        f"the exit is priced on was bought rather than built, which is "
+        f"{_percent(safe_div(acquired, case.model.exit_ebitda, default=ZERO))} of "
+        f"it. An exit multiple argued from the platform's own growth has to "
+        f"carry that share too.",
+        "Each purchase closes at a period end, so the debt raised for it is "
+        "outstanding for a full period before any of the earnings it bought are "
+        "recorded. Leverage measured at that boundary is therefore at its worst "
+        "reading of the hold, and the covenant tests see it.",
+    ]
+
+    return Section(
+        title="Bought during the hold",
+        summary=(
+            f"{len(deal.acquisitions)} acquisitions added "
+            f"{_amount(blended.acquired_ebitda)} of run-rate EBITDA at "
+            f"{_multiple(blended.blended_multiple)} blended against a platform "
+            f"bought at {_multiple(blended.platform_multiple)}, "
+            f"{_turns(blended.arbitrage)} of arbitrage. Against the platform run "
+            f"on its own the money multiple moves {moved_moic} and the rate of "
+            f"return moves {moved_irr}."
+        ),
+        lines=tuple(lines),
+        table=Table(
+            headings=(
+                "Business",
+                "Closes",
+                "EBITDA",
+                "Multiple",
+                "Price",
+                "New debt",
+                "From cash",
+            ),
+            rows=rows,
+            align=("l", "l", "r", "r", "r", "r", "r"),
         ),
         notes=tuple(notes),
     )

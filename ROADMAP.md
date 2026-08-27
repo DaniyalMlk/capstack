@@ -68,7 +68,7 @@ the equity that only exist because somebody has to be paid to run the business.
       own return rather than sitting flat
 - [x] Dividend recapitalisation mid-hold: a distribution funded by new debt, and
       the effect on the return of getting paid early
-- [ ] Add-on acquisitions: a purchase during the hold, funded from cash or from
+- [x] Add-on acquisitions: a purchase during the hold, funded from cash or from
       an incremental facility, and its effect on the blended entry multiple
 - [ ] Refinancing an existing tranche, including the call premium and the
       unamortised financing fees written off

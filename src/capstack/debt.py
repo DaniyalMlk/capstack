@@ -43,6 +43,9 @@ from enum import Enum
 from .daycount import DayCount
 from .drivers import Driver
 from .events import (
+    AddOn,
+    AddOnError,
+    AddOnOutcome,
     Recapitalisation,
     RecapitalisationError,
     RecapitalisationOutcome,
@@ -582,6 +585,16 @@ class TranchePeriod:
     sweep_repayment: Money
     closing: Money
     recapitalisation: Money = ZERO
+    acquisition: Money = ZERO
+
+    @property
+    def incremental_draw(self) -> Money:
+        """Face taken down at the period boundary, whatever it funded.
+
+        Split by purpose in the two fields above rather than carried as one
+        number, because a reader of the schedule wants to know whether a tranche
+        grew to pay the shareholders or to buy something."""
+        return self.recapitalisation + self.acquisition
 
     @property
     def total_repayment(self) -> Money:
@@ -606,7 +619,7 @@ class TranchePeriod:
             + self.pik_interest
             - self.mandatory_repayment
             - self.sweep_repayment
-            + self.recapitalisation
+            + self.incremental_draw
         )
         return is_close(self.closing, expected, tolerance=tolerance)
 
@@ -631,6 +644,8 @@ class DebtPeriod:
     certified_leverage: Money | None = None
     distribution: Money = ZERO
     distribution_from_cash: Money = ZERO
+    acquisition_spend: Money = ZERO
+    acquisition_from_cash: Money = ZERO
 
     @property
     def index(self) -> int:
@@ -680,6 +695,15 @@ class DebtPeriod:
         return sum((t.recapitalisation for t in self.tranches), ZERO)
 
     @property
+    def acquisition_debt(self) -> Money:
+        """Incremental face taken down to fund an acquisition."""
+        return sum((t.acquisition for t in self.tranches), ZERO)
+
+    @property
+    def incremental_draw(self) -> Money:
+        return self.recapitalisation + self.acquisition_debt
+
+    @property
     def cash_cost_of_debt(self) -> Money:
         """Everything the capital structure took in cash this period."""
         return self.cash_interest + self.undrawn_fees
@@ -718,6 +742,7 @@ class DebtPeriod:
             + self.revolver_draw
             + self.funding_shortfall
             - self.distribution_from_cash
+            - self.acquisition_from_cash
         )
         return is_close(self.closing_cash, expected, tolerance=tolerance)
 
@@ -759,6 +784,117 @@ def _by_period(
                 )
         scheduled[event.period] = event
     return scheduled
+
+
+def _acquisitions_by_period(
+    events: Sequence[AddOn],
+    structure: CapitalStructure,
+    span: int,
+    taken: dict[int, Recapitalisation],
+) -> dict[int, AddOn]:
+    """Index the acquisitions by period, checking each one before anything runs.
+
+    An acquisition in the final period is refused rather than modelled. It would
+    pay cash for earnings no period ever records, and the exit — priced on the
+    final period's EBITDA — would then value nothing at all: a purchase price
+    out, no earnings in, and a bridge that blames the shortfall on the operating
+    case. Bringing the acquisition forward or extending the projection is what
+    the file actually means.
+    """
+    known = {t.name for t in structure.tranches}
+    scheduled: dict[int, AddOn] = {}
+    for event in events:
+        if event.period >= span:
+            raise AddOnError(
+                f"{event.label}: closes at the end of period {event.period} of "
+                f"{span}, so nothing it buys is ever earned; move it earlier or "
+                f"lengthen the projection"
+            )
+        if event.period in scheduled:
+            raise AddOnError(
+                f"two acquisitions close at the end of period {event.period}; "
+                f"combine them into one"
+            )
+        if event.period in taken:
+            raise AddOnError(
+                f"{event.label}: a recapitalisation already lands at the end of "
+                f"period {event.period}; a model that pays the shareholders and "
+                f"buys a business at the same instant cannot say which happened "
+                f"first, and the leverage differs by which"
+            )
+        for draw in event.draws:
+            if draw.tranche not in known:
+                raise AddOnError(
+                    f"{event.label}: there is no tranche named {draw.tranche!r} to "
+                    f"draw on; the structure holds "
+                    f"{', '.join(repr(n) for n in sorted(known))}"
+                )
+            if structure.tranche(draw.tranche).has_matured(event.period - 1):
+                raise AddOnError(
+                    f"{event.label}: {draw.tranche} has matured by period "
+                    f"{event.period}, so there is nothing left to draw on it"
+                )
+        scheduled[event.period] = event
+    return scheduled
+
+
+def _acquire(
+    structure: CapitalStructure,
+    row: DebtPeriod,
+    event: AddOn,
+    *,
+    index: int,
+    earnings: Money | None,
+) -> tuple[DebtPeriod, AddOnOutcome]:
+    """Apply an acquisition at the end of a solved period.
+
+    The same placement as a recapitalisation, and for the same reason: the new
+    balance is what the following period opens on, so interest, the sweep and
+    the covenant tests all pick the acquisition up without knowing it happened.
+
+    What differs is the direction of the cash and what it buys. A
+    recapitalisation takes cash out of the business and leaves the earnings
+    alone. An acquisition takes cash out and puts earnings in — but the earnings
+    arrive through the operating case, one layer up, which is why nothing here
+    touches EBITDA. The leverage recorded on either side of the event is
+    therefore measured against the *same* earnings, and reads worse than the
+    deal is: the debt lands a period before the profit it bought.
+    """
+    from_cash = event.from_cash
+    available = row.closing_cash - structure.minimum_cash
+    if from_cash > available:
+        raise AddOnError(
+            f"{event.label}: needs {from_cash} off a balance sheet holding "
+            f"{row.closing_cash} against a minimum of {structure.minimum_cash}, "
+            f"which leaves only {available}; fund more of it with debt or move it "
+            f"to a period the business can pay for it in"
+        )
+
+    before = _leverage(row.closing_debt, row.closing_cash, earnings)
+    tranches = tuple(
+        replace(
+            t,
+            acquisition=event.draw_on(t.name),
+            closing=t.closing + event.draw_on(t.name),
+        )
+        for t in row.tranches
+    )
+    cash_after = row.closing_cash - from_cash
+    updated = replace(
+        row,
+        tranches=tranches,
+        closing_cash=cash_after,
+        acquisition_spend=event.uses,
+        acquisition_from_cash=from_cash,
+    )
+    return updated, AddOnOutcome(
+        event=event,
+        index=index,
+        cash_before=row.closing_cash,
+        cash_after=cash_after,
+        leverage_before=before,
+        leverage_after=_leverage(updated.closing_debt, cash_after, earnings),
+    )
 
 
 def _recapitalise(
@@ -831,6 +967,7 @@ class DebtSchedule:
     periods: tuple[DebtPeriod, ...]
     opening_cash: Money
     recapitalisations: tuple[RecapitalisationOutcome, ...] = ()
+    acquisitions: tuple[AddOnOutcome, ...] = ()
 
     def __len__(self) -> int:
         return len(self.periods)
@@ -852,6 +989,7 @@ class DebtSchedule:
         ebitda: Sequence[Numeric] | None = None,
         opening_ebitda: Numeric | None = None,
         recapitalisations: Sequence[Recapitalisation] = (),
+        acquisitions: Sequence[AddOn] = (),
     ) -> DebtSchedule:
         """Roll the structure forward, one period at a time.
 
@@ -884,6 +1022,9 @@ class DebtSchedule:
             )
 
         scheduled = _by_period(recapitalisations or (), structure, len(periods))
+        purchases = _acquisitions_by_period(
+            acquisitions or (), structure, len(periods), scheduled
+        )
 
         balances = {t.name: t.face for t in structure.tranches}
         cash = money(opening_cash)
@@ -892,6 +1033,7 @@ class DebtSchedule:
 
         rows: list[DebtPeriod] = []
         applied_events: list[RecapitalisationOutcome] = []
+        applied_purchases: list[AddOnOutcome] = []
         for i, period in enumerate(periods):
             certified: Money | None = None
             rate = structure.sweep_rate
@@ -932,6 +1074,17 @@ class DebtSchedule:
                 )
                 applied_events.append(applied)
 
+            purchase = purchases.get(period.index)
+            if purchase is not None:
+                row, bought = _acquire(
+                    structure,
+                    row,
+                    purchase,
+                    index=i,
+                    earnings=money(ebitda[i]) if ebitda is not None else None,
+                )
+                applied_purchases.append(bought)
+
             rows.append(row)
             balances = {t.name: t.closing for t in row.tranches}
             cash = row.closing_cash
@@ -941,6 +1094,7 @@ class DebtSchedule:
             periods=tuple(rows),
             opening_cash=money(opening_cash),
             recapitalisations=tuple(applied_events),
+            acquisitions=tuple(applied_purchases),
         )
 
     @classmethod
@@ -952,6 +1106,7 @@ class DebtSchedule:
         opening_cash: Numeric = 0,
         opening_ebitda: Numeric | None = None,
         recapitalisations: Sequence[Recapitalisation] = (),
+        acquisitions: Sequence[AddOn] = (),
     ) -> DebtSchedule:
         """Run the structure against an operating case."""
         return cls.run(
@@ -962,6 +1117,7 @@ class DebtSchedule:
             ebitda=[p.ebitda for p in model],
             opening_ebitda=opening_ebitda,
             recapitalisations=recapitalisations,
+            acquisitions=acquisitions,
         )
 
     # -- Aggregates ------------------------------------------------------
@@ -991,6 +1147,21 @@ class DebtSchedule:
     def total_recapitalised(self) -> Money:
         """Incremental face raised across the hold, outside the revolver."""
         return sum((p.recapitalisation for p in self.periods), ZERO)
+
+    @property
+    def total_acquisition_debt(self) -> Money:
+        """Incremental face raised to buy things, outside the revolver."""
+        return sum((p.acquisition_debt for p in self.periods), ZERO)
+
+    @property
+    def total_acquisition_spend(self) -> Money:
+        """Everything the acquisitions cost, however it was funded."""
+        return sum((p.acquisition_spend for p in self.periods), ZERO)
+
+    @property
+    def total_acquisition_from_cash(self) -> Money:
+        """The share of that spend the business paid for out of its own cash."""
+        return sum((p.acquisition_from_cash for p in self.periods), ZERO)
 
     @property
     def total_distributed(self) -> Money:

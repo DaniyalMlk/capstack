@@ -22,9 +22,10 @@ engine rebuilt and re-run at every cell, break-evens solved along any
 assumption, and the committee memo that assembles all of it), together with the
 management incentive plan that sits between the preferred and the common — an
 option pool with a strike, a vesting schedule, and a ratchet that steps with the
-sponsor's own return — and the dividend recapitalisation, which raises debt
-part-way through a hold and pays it straight out to the shareholders. See
-[ROADMAP.md](ROADMAP.md).
+sponsor's own return — the dividend recapitalisation, which raises debt part-way
+through a hold and pays it straight out to the shareholders, and the add-on
+acquisition, which buys earnings during the hold and blends them into the entry
+multiple. See [ROADMAP.md](ROADMAP.md).
 
 ## Install
 
@@ -369,6 +370,86 @@ rather than 2031. The "held flat" rows are the same deal run a second time with
 the event stripped out, which is the only way to say what the event was worth
 rather than merely that it occurred.
 
+A deal that buys other businesses while it holds this one is described under
+`acquisitions`, and each purchase gets its own funding table:
+
+```console
+$ capstack acquisitions examples/thornbury.json
+Project Thornbury - acquisitions
+================================
+
+  Halloway  (end of period 1)
+  ---------------------------
+    EBITDA acquired                       6.50
+    Multiple paid                        6.75x
+    Enterprise value                     43.88
+    Synergies, over 2 periods             0.90
+    Multiple after synergies             5.93x
+    Transaction fees                      0.66
+    Integration cost                      1.20
+    Total uses                           45.73
+    Face drawn                           44.00
+    Debt proceeds                        42.90
+    Funded from cash                      2.83
+    Capital deployed                     46.83
+    Cash after                           16.28
+    Leverage after                       5.06x
+    Turns added                         +0.92x
+  ...
+  Blended entry
+    Platform enterprise value           504.00
+    Platform EBITDA                      48.00
+    Platform multiple                   10.50x
+    Acquired enterprise value           134.25
+    EBITDA acquired                      20.00
+    Combined EBITDA                      68.00
+    Capital deployed                    647.09
+
+    Blended multiple                     9.39x
+    After synergies                      9.01x
+    On capital deployed                  9.52x
+    Multiple arbitrage                  +1.11x
+    Bought, not built                    29.4%
+```
+
+The last five lines are what a buy-and-build is argued on. A platform bought at
+10.50x that adds three businesses between 6.25x and 7.00x has an entry multiple
+of 9.39x, and it is that number the exit multiple has to be compared against —
+quoting the platform's 10.50x flatters the deal by exactly the arbitrage. The
+three readings above it answer different questions. After synergies is 9.01x,
+which credits earnings that have not been earned yet. On capital deployed is
+9.52x, which counts the fees, the discount and the integration cost that a
+multiple quoted on enterprise value leaves out: doing five transactions instead
+of one is not free, and the gap between 9.39x and 9.52x is what it cost.
+
+The purchases then run through everything downstream without being told about.
+The acquired earnings join the operating case from the following period at their
+own margin, growing on their own base; the debt raised for them is swept,
+amortised and tested by the covenants; and the memo reports the programme
+against the same deal with the purchases stripped out:
+
+```console
+$ capstack report examples/thornbury.json
+  ...
+  Bought during the hold
+  ----------------------
+
+  3 acquisitions added 20.0 of run-rate EBITDA at 9.39x blended against a
+  platform bought at 10.50x, 1.11x of arbitrage. Against the platform run on
+  its own the money multiple moves +0.43x and the rate of return moves
+  +4.5pp.
+
+    Business         Closes  EBITDA  Multiple  Price  New debt  From cash
+    ---------------  ------  ------  --------  -----  --------  ---------
+    Halloway         P1         6.5     6.75x   43.9      44.0        2.8
+    Ferrand Group    P2         8.0     7.00x   56.0      56.0        3.7
+    Calder Services  P3         5.5     6.25x   34.4      33.0        3.5
+
+    25.2 of the 94.1 of EBITDA the exit is priced on was bought rather than
+    built, which is 26.7% of it. An exit multiple argued from the platform's
+    own growth has to carry that share too.
+```
+
 Two assumptions at a time, with the deal rebuilt and re-run per cell:
 
 ```console
@@ -510,6 +591,41 @@ Reported on its own, that says the sponsor received some money early. Reported
 against the same deal run a second time with the event stripped out, it says
 what the event was worth. The second run costs a full pass of the engine and is
 worth it, because the counterfactual is the entire content of the claim.
+
+**An acquired business is carried as its own stream, not as a lift to the
+platform's revenue line.** The natural implementation adds the bought revenue
+into the base that compounds, and it is wrong twice over: the acquired base then
+grows a second time next period, and the earnings inherit the platform's margin
+whatever they were actually bought on. Carrying the purchase separately keeps
+both honest — it compounds from its own run-rate at its own margin — and it also
+buys the one figure a buy-and-build cannot be judged without, which is how much
+of the exit earnings were bought rather than built.
+
+**Cash is the plug for an acquisition, and a purchase the balance sheet cannot
+fund is refused.** The draws raise what they raise; whatever is left of the
+price comes off the cash the business is holding. That means the funding table
+cannot fail to balance, and reduces the failure modes to one real question:
+whether the business could actually pay. When it cannot, the answer is an error
+naming what was needed and what was there, not a quietly smaller purchase. A
+model that pays less than the file describes has answered a question nobody
+asked.
+
+**An acquisition in the final period is refused rather than modelled.** It would
+pay cash for earnings no period ever records, and the exit — priced on the final
+period's EBITDA — would value nothing at all. The deal would then report a
+purchase price out, no earnings in, and a bridge blaming the shortfall on the
+operating case. Bringing the purchase forward or lengthening the projection is
+what such a file actually means, and saying so is more useful than modelling the
+nonsense faithfully.
+
+**Synergies are quoted twice and neither is the headline.** The blended multiple
+holds them out, because a multiple struck on earnings that do not exist yet is a
+forecast wearing the clothes of a fact. The synergised multiple credits them,
+because it is the number the price was defended with and hiding it does not make
+the argument go away. Phasing is explicit for the same reason: an add-on that
+pays for itself in year one and one that pays for itself in year three are
+different deals, and underwriting the first when the second is what happens is
+how a roll-up gets into trouble.
 
 **A ratchet is written as marginal bands, because the obvious reading is
 circular.** A management pool that steps up as the sponsor clears hurdles is the

@@ -1225,6 +1225,162 @@ def _cmd_project(args: argparse.Namespace) -> int:
     return 0
 
 
+def _acquisitions_report(deal: Deal) -> dict[str, Any]:
+    """The acquisition programme: what each purchase cost and what it blended to.
+
+    The funding table is built from the events rather than from the schedule, so
+    a price can be read out of a file with no operating case behind it. Where
+    there is one, the schedule is run as well — it is the only thing that knows
+    whether the business could actually pay its share of the price.
+    """
+    if not deal.acquisitions:
+        raise DealSpecError(
+            'this deal buys nothing during the hold; add an "acquisitions" block '
+            "describing the purchases"
+        )
+    blended = deal.blended_entry
+    landed: dict[int, Any] = {}
+    if deal.has_projection and deal.has_structure:
+        landed = {o.event.period: o for o in deal.schedule().acquisitions}
+
+    purchases = []
+    for add_on in deal.acquisitions:
+        outcome = landed.get(add_on.period)
+        purchases.append(
+            {
+                "label": add_on.label,
+                "period": add_on.period,
+                "ebitda": str(add_on.ebitda),
+                "multiple": str(add_on.multiple),
+                "enterprise_value": str(add_on.enterprise_value),
+                "fees": str(add_on.fees),
+                "integration_cost": str(add_on.integration_cost),
+                "uses": str(add_on.uses),
+                "face_drawn": str(add_on.face),
+                "debt_proceeds": str(add_on.debt_proceeds),
+                "from_cash": str(add_on.from_cash),
+                "total_cost": str(add_on.total_cost),
+                "synergies": str(add_on.synergies),
+                "synergy_phase_in": add_on.synergy_phase_in,
+                "synergised_multiple": str(add_on.synergised_multiple),
+                "cash_after": None if outcome is None else str(outcome.cash_after),
+                "leverage_after": (
+                    None
+                    if outcome is None or outcome.leverage_after is None
+                    else str(outcome.leverage_after)
+                ),
+                "turns_added": (
+                    None
+                    if outcome is None or outcome.turns_added is None
+                    else str(outcome.turns_added)
+                ),
+            }
+        )
+
+    return {
+        "name": deal.name,
+        "purchases": purchases,
+        "blended": {
+            "platform_enterprise_value": str(blended.platform_enterprise_value),
+            "platform_ebitda": str(blended.platform_ebitda),
+            "platform_multiple": str(blended.platform_multiple),
+            "acquired_enterprise_value": str(blended.acquired_enterprise_value),
+            "acquired_ebitda": str(blended.acquired_ebitda),
+            "synergies": str(blended.synergies),
+            "enterprise_value": str(blended.enterprise_value),
+            "ebitda": str(blended.ebitda),
+            "capital_deployed": str(blended.capital_deployed),
+            "blended_multiple": str(blended.blended_multiple),
+            "synergised_multiple": str(blended.synergised_multiple),
+            "all_in_multiple": str(blended.all_in_multiple),
+            "arbitrage": str(blended.arbitrage),
+            "acquired_share": str(blended.acquired_share),
+        },
+    }
+
+
+def _print_acquisitions(report: dict[str, Any]) -> None:
+    header = f"{report['name']} - acquisitions"
+    print(header)
+    print("=" * len(header))
+    print()
+
+    for p in report["purchases"]:
+        title = f"{p['label']}  (end of period {p['period']})"
+        print(f"  {title}")
+        print("  " + "-" * len(title))
+        rows: list[tuple[str, str]] = [
+            ("EBITDA acquired", _format_money(Decimal(p["ebitda"]))),
+            ("Multiple paid", f"{Decimal(p['multiple']):.2f}x"),
+            ("Enterprise value", _format_money(Decimal(p["enterprise_value"]))),
+        ]
+        if Decimal(p["synergies"]) > 0:
+            phase = p["synergy_phase_in"]
+            over = "immediate" if phase == 1 else f"over {phase} periods"
+            rows.append((f"Synergies, {over}", _format_money(Decimal(p["synergies"]))))
+            rows.append(
+                ("Multiple after synergies", f"{Decimal(p['synergised_multiple']):.2f}x")
+            )
+        rows.extend(
+            [
+                ("Transaction fees", _format_money(Decimal(p["fees"]))),
+                ("Integration cost", _format_money(Decimal(p["integration_cost"]))),
+                ("Total uses", _format_money(Decimal(p["uses"]))),
+                ("Face drawn", _format_money(Decimal(p["face_drawn"]))),
+                ("Debt proceeds", _format_money(Decimal(p["debt_proceeds"]))),
+                ("Funded from cash", _format_money(Decimal(p["from_cash"]))),
+                ("Capital deployed", _format_money(Decimal(p["total_cost"]))),
+            ]
+        )
+        if p["cash_after"] is not None:
+            rows.append(("Cash after", _format_money(Decimal(p["cash_after"]))))
+        if p["leverage_after"] is not None:
+            rows.append(("Leverage after", f"{Decimal(p['leverage_after']):.2f}x"))
+        if p["turns_added"] is not None:
+            rows.append(("Turns added", f"{Decimal(p['turns_added']):+.2f}x"))
+        for label, value in rows:
+            print(f"    {label:<28}{value:>14}")
+        print()
+
+    b = report["blended"]
+    print("  Blended entry")
+    for label, value in (
+        (
+            "Platform enterprise value",
+            _format_money(Decimal(b["platform_enterprise_value"])),
+        ),
+        ("Platform EBITDA", _format_money(Decimal(b["platform_ebitda"]))),
+        ("Platform multiple", f"{Decimal(b['platform_multiple']):.2f}x"),
+        (
+            "Acquired enterprise value",
+            _format_money(Decimal(b["acquired_enterprise_value"])),
+        ),
+        ("EBITDA acquired", _format_money(Decimal(b["acquired_ebitda"]))),
+        ("Combined EBITDA", _format_money(Decimal(b["ebitda"]))),
+        ("Capital deployed", _format_money(Decimal(b["capital_deployed"]))),
+    ):
+        print(f"    {label:<28}{value:>14}")
+    print()
+    for label, value in (
+        ("Blended multiple", f"{Decimal(b['blended_multiple']):.2f}x"),
+        ("After synergies", f"{Decimal(b['synergised_multiple']):.2f}x"),
+        ("On capital deployed", f"{Decimal(b['all_in_multiple']):.2f}x"),
+        ("Multiple arbitrage", f"{Decimal(b['arbitrage']):+.2f}x"),
+        ("Bought, not built", f"{Decimal(b['acquired_share']):.1%}"),
+    ):
+        print(f"    {label:<28}{value:>14}")
+
+
+def _cmd_acquisitions(args: argparse.Namespace) -> int:
+    deal = load_deal(args.file)
+    report = _acquisitions_report(deal)
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        _print_acquisitions(report)
+    return 0
+
+
 def _cmd_deal(args: argparse.Namespace) -> int:
     deal = load_deal(args.file)
     report = _deal_report(deal.name, deal.close_date, deal.transaction)
@@ -1338,6 +1494,21 @@ def build_parser() -> argparse.ArgumentParser:
     exit_.add_argument("file", help="path to a deal file (JSON)")
     exit_.add_argument("--json", action="store_true", help="emit JSON instead of a table")
     exit_.set_defaults(handler=_cmd_exit)
+
+    acquisitions = sub.add_parser(
+        "acquisitions",
+        help="businesses bought during the hold, and the entry multiple they blend to",
+        description=(
+            "Show the funding table for each acquisition and the multiple the "
+            "platform and its add-ons together were bought at, before and after "
+            "the synergies underwritten for them."
+        ),
+    )
+    acquisitions.add_argument("file", help="path to a deal file (JSON)")
+    acquisitions.add_argument(
+        "--json", action="store_true", help="emit JSON instead of a table"
+    )
+    acquisitions.set_defaults(handler=_cmd_acquisitions)
 
     sensitivity = sub.add_parser(
         "sensitivity",
