@@ -37,6 +37,9 @@ from .events import (
     Recapitalisation,
     RecapitalisationError,
     RecapitalisationOutcome,
+    Refinancing,
+    RefinancingError,
+    RefinancingOutcome,
 )
 from .incentive import (
     IncentiveError,
@@ -173,6 +176,9 @@ __all__ = [
     "Recapitalisation",
     "RecapitalisationError",
     "RecapitalisationOutcome",
+    "Refinancing",
+    "RefinancingError",
+    "RefinancingOutcome",
     "Report",
     "Section",
     "Security",

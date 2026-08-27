@@ -70,7 +70,13 @@ the equity that only exist because somebody has to be paid to run the business.
       the effect on the return of getting paid early
 - [x] Add-on acquisitions: a purchase during the hold, funded from cash or from
       an incremental facility, and its effect on the blended entry multiple
-- [ ] Refinancing an existing tranche, including the call premium and the
+- [x] Refinancing an existing tranche, including the call premium and the
       unamortised financing fees written off
 - [ ] A stub period at close, so a deal signing in November is not modelled as
       though it closed on the first day of the year
+- [ ] Contractual amortisation on face drawn after close. Amortisation is a
+      fraction of original face, which is right for paper placed at close and
+      leaves a delayed-draw facility repaying nothing however much is drawn on
+      it later
+- [ ] An amortisation schedule for capitalised financing fees, so the balance
+      written off at a refinancing is derived rather than stated in the file
