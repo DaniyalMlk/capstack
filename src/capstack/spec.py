@@ -323,7 +323,7 @@ class Deal:
             add_ons=self.acquisitions,
         )
 
-    def _streams(self) -> tuple[AcquiredStream, ...]:
+    def acquired_streams(self) -> tuple[AcquiredStream, ...]:
         """The acquired earnings, each carried at a margin this deal implies.
 
         An acquisition that did not state its revenue is carried at the
@@ -521,7 +521,7 @@ class Deal:
                 self.operating,
                 opening_revenue=self.opening_revenue,
                 opening_net_working_capital=self.opening_net_working_capital,
-                acquisitions=self._streams(),
+                acquisitions=self.acquired_streams(),
             )
         except ValueError as exc:
             if isinstance(exc, DealSpecError):
