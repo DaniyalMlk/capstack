@@ -41,6 +41,8 @@ from .events import (
     Draw,
     Recapitalisation,
     RecapitalisationError,
+    Refinancing,
+    RefinancingError,
 )
 from .incentive import IncentiveError, OptionPool, Ratchet, Vesting
 from .money import ONE, ZERO, Money, money, safe_div
@@ -303,10 +305,15 @@ class Deal:
     incentive: IncentivePlan | None = None
     recapitalisations: tuple[Recapitalisation, ...] = ()
     acquisitions: tuple[AddOn, ...] = ()
+    refinancings: tuple[Refinancing, ...] = ()
 
     @property
     def has_acquisitions(self) -> bool:
         return bool(self.acquisitions)
+
+    @property
+    def has_refinancings(self) -> bool:
+        return bool(self.refinancings)
 
     @property
     def blended_entry(self) -> BlendedEntry:
@@ -438,11 +445,14 @@ class Deal:
                 opening_ebitda=self.transaction.valuation.ltm_ebitda,
                 recapitalisations=self.recapitalisations,
                 acquisitions=self.acquisitions,
+                refinancings=self.refinancings,
             )
         except RecapitalisationError as exc:
             raise DealSpecError(f"recapitalisations: {exc}") from exc
         except AddOnError as exc:
             raise DealSpecError(f"acquisitions: {exc}") from exc
+        except RefinancingError as exc:
+            raise DealSpecError(f"refinancings: {exc}") from exc
 
     @property
     def has_recapitalisations(self) -> bool:
@@ -779,9 +789,9 @@ def _parse_security(data: Any, index: int) -> SecurityPlan:
         raise DealSpecError(f"{where}: {exc}") from exc
 
 
-def _parse_draw(data: Any, index: int, where: str) -> Draw:
+def _parse_draw(data: Any, index: int, where: str, *, key: str = "draws") -> Draw:
     """Read one incremental take-down, priced on its own terms."""
-    at = f"{where}.draws[{index}]"
+    at = f"{where}.{key}[{index}]"
     if not isinstance(data, dict):
         raise DealSpecError(f"{at}: expected an object")
     try:
@@ -872,6 +882,47 @@ def _parse_acquisition(data: Any, index: int, periods: int) -> AddOn:
             label=str(data.get("label", f"Add-on {index + 1}")),
         )
     except (AddOnError, RecapitalisationError) as exc:
+        raise DealSpecError(f"{where}: {exc}") from exc
+
+
+def _parse_refinancing(data: Any, index: int) -> Refinancing:
+    """Read one takeout: the facility retired, and the paper that replaces it.
+
+    ``unamortised_fees`` is stated rather than derived. The engine capitalises
+    financing fees at close but does not carry an amortisation schedule for
+    them — that is an accounting layer this model does not have — and inventing
+    a straight-line write-down to derive the figure would produce a number
+    nobody had agreed to. A file that knows the balance says so; one that does
+    not leaves it at zero and reports no write-off, which is honest about what
+    it does not know.
+    """
+    where = f"refinancings[{index}]"
+    if not isinstance(data, dict):
+        raise DealSpecError(f"{where}: expected an object")
+
+    period = _whole(data, "period", where)
+    if period is None:
+        raise DealSpecError(
+            f"{where}: say which period this lands at the end of, numbered from one"
+        )
+
+    into_raw = data.get("into", [])
+    if not isinstance(into_raw, list):
+        raise DealSpecError(f"{where}.into: expected a list of take-downs")
+
+    try:
+        return Refinancing(
+            period=period,
+            tranche=str(_require(data, "tranche", where)),
+            into=tuple(
+                _parse_draw(item, i, where, key="into")
+                for i, item in enumerate(into_raw)
+            ),
+            call_premium_rate=_optional_amount(data, "call_premium_rate", where),
+            unamortised_fees=_optional_amount(data, "unamortised_fees", where),
+            label=str(data.get("label", "Refinancing")),
+        )
+    except (RefinancingError, RecapitalisationError) as exc:
         raise DealSpecError(f"{where}: {exc}") from exc
 
 
@@ -1330,6 +1381,24 @@ def parse_deal(data: dict[str, Any]) -> Deal:
             for i, item in enumerate(acquisitions_raw)
         )
 
+    refinancings: tuple[Refinancing, ...] = ()
+    refinancings_raw = data.get("refinancings")
+    if refinancings_raw is not None:
+        if not isinstance(refinancings_raw, list):
+            raise DealSpecError("refinancings: expected a list of events")
+        if structure is None:
+            raise DealSpecError(
+                "refinancings: there is nothing to take out; describe the tranches "
+                "under 'debt' and the rules under 'structure'"
+            )
+        if grid is None:
+            raise DealSpecError(
+                "refinancings: an event lands in a period, so a projection is required"
+            )
+        refinancings = tuple(
+            _parse_refinancing(item, i) for i, item in enumerate(refinancings_raw)
+        )
+
     exit_multiple: Money | None = None
     exit_fee_rate: Money = ZERO_RATE
     equity = EquityPlan()
@@ -1361,6 +1430,7 @@ def parse_deal(data: dict[str, Any]) -> Deal:
         incentive=incentive,
         recapitalisations=recapitalisations,
         acquisitions=acquisitions,
+        refinancings=refinancings,
     )
 
 

@@ -165,6 +165,8 @@ def prepare(deal: Deal, *, breakevens: bool = True) -> Report:
     sections.append(_exit(case.outcome))
     if deal.has_acquisitions:
         sections.append(_acquisitions(deal, case))
+    if case.schedule.refinancings:
+        sections.append(_refinancing(deal, case))
     if case.outcome.was_recapitalised:
         sections.append(_recapitalisation(deal, case))
     if case.outcome.incentive is not None:
@@ -630,6 +632,103 @@ def _acquisitions(deal: Deal, case: Case) -> Section:
                 "New debt",
                 "From cash",
             ),
+            rows=rows,
+            align=("l", "l", "r", "r", "r", "r", "r"),
+        ),
+        notes=tuple(notes),
+    )
+
+
+def _refinancing(deal: Deal, case: Case) -> Section:
+    """What the takeout cost, what it saves, and whether the second covers the first.
+
+    The comparison is the whole section. A repricing is always attractive stated
+    as a spread and often unattractive stated as a cash cost against the hold
+    that remains, because the premium and the fees are paid at once and the
+    saving arrives a period at a time. Two years from an exit there is frequently
+    not enough left of the hold to earn back what the exercise costs, and a model
+    that reports the new coupon without that arithmetic has made the case for
+    something it has not tested.
+
+    The write-off sits apart from the cash cost deliberately. It is a charge
+    against reported earnings and nothing else — no balance in this model moves
+    and the return does not shift — but it is real in a real set of accounts, and
+    the reader should meet it here rather than from somebody else.
+    """
+    schedule = case.schedule
+    events = schedule.refinancings
+
+    rows = tuple(
+        (
+            e.label,
+            f"P{e.event.period}",
+            _amount(e.repaid),
+            _percent(e.old_rate),
+            _percent(e.new_rate),
+            _amount(e.call_premium),
+            _amount(e.annual_saving),
+        )
+        for e in events
+    )
+
+    cash_cost = sum((e.cash_cost for e in events), ZERO)
+    saving = sum((e.saving_over_the_remainder for e in events), ZERO)
+    lines = [
+        Line("Face retired early", _amount(schedule.total_refinanced)),
+        Line("Face of the new paper", _amount(sum((e.face for e in events), ZERO))),
+        Line("Call premiums paid", _amount(schedule.total_call_premiums)),
+        Line(
+            "Cost of the exercise",
+            _amount(cash_cost),
+            "premium, fees and discount",
+        ),
+        Line(
+            "Interest saved over the remainder",
+            _amount(saving),
+            "undiscounted, before amortisation",
+        ),
+        Line(
+            "Fees written off",
+            _amount(schedule.total_fees_written_off),
+            "non-cash; no balance here moves",
+        ),
+    ]
+
+    notes = []
+    for e in events:
+        verdict = (
+            "more than covers what it cost"
+            if e.pays_back
+            else "does not cover what it cost"
+        )
+        notes.append(
+            f"{e.label} took {_amount(e.repaid)} out at {_percent(e.old_rate)} and "
+            f"replaced it at {_percent(e.new_rate)}, saving {_amount(e.annual_saving)} "
+            f"a period with {e.periods_remaining} of them left. Over that remainder "
+            f"the saving {verdict}: {_amount(e.saving_over_the_remainder)} against "
+            f"{_amount(e.cash_cost)}."
+        )
+    notes.append(
+        "The saving is struck on the balance retired and ignores the amortisation "
+        "and the sweep that will reduce it, both of which cut the figure. It is an "
+        "upper bound on the benefit, which is the direction a cost comparison "
+        "should err in."
+    )
+
+    verdict = "earns back" if saving > cash_cost else "does not earn back"
+    return Section(
+        title="Refinanced during the hold",
+        summary=(
+            f"{_amount(schedule.total_refinanced)} of paper was retired early at a "
+            f"cash cost of {_amount(cash_cost)}. The lower coupon {verdict} that "
+            f"over the hold that remains: {_amount(saving)} of interest saved. A "
+            f"further {_amount(schedule.total_fees_written_off)} of capitalised fees "
+            f"was written off, which is a charge against earnings and not against "
+            f"cash."
+        ),
+        lines=tuple(lines),
+        table=Table(
+            headings=("Facility", "Retired", "Balance", "Old", "New", "Premium", "Saved a period"),
             rows=rows,
             align=("l", "l", "r", "r", "r", "r", "r"),
         ),

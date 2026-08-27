@@ -35,6 +35,14 @@
       "cash_rate": 0.05,
       "floor": 0.01,
       "maturity": 7
+    },
+    {
+      "name": "Repriced term loan",
+      "kind": "term_loan",
+      "face": 0.0,
+      "cash_rate": 0.0325,
+      "floor": 0.01,
+      "maturity": 7
     }
   ],
   "rollover_equity": 18.0,
@@ -161,6 +169,23 @@
           "amount": 33.0,
           "issue_price": 0.995,
           "financing_fee_rate": 0.02
+        }
+      ]
+    }
+  ],
+  "refinancings": [
+    {
+      "period": 4,
+      "label": "Term Loan B repricing",
+      "tranche": "Term Loan B",
+      "call_premium_rate": 0.01,
+      "unamortised_fees": 2.4,
+      "into": [
+        {
+          "tranche": "Repriced term loan",
+          "amount": 195.0,
+          "issue_price": 0.9975,
+          "financing_fee_rate": 0.0125
         }
       ]
     }
