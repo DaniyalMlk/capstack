@@ -72,7 +72,7 @@ the equity that only exist because somebody has to be paid to run the business.
       an incremental facility, and its effect on the blended entry multiple
 - [x] Refinancing an existing tranche, including the call premium and the
       unamortised financing fees written off
-- [ ] A stub period at close, so a deal signing in November is not modelled as
+- [x] A stub period at close, so a deal signing in November is not modelled as
       though it closed on the first day of the year
 - [x] Contractual amortisation on face drawn after close. Amortisation is a
       fraction of original face, which is right for paper placed at close and
@@ -80,3 +80,21 @@ the equity that only exist because somebody has to be paid to run the business.
       it later
 - [x] An amortisation schedule for capitalised financing fees, so the balance
       written off at a refinancing is derived rather than stated in the file
+
+## Phase 9 — Sub-annual grids, and the facilities a file cannot yet describe
+
+Everything above is exercised on annual grids. The engine builds quarterly and
+monthly ones, and two things stop them being trustworthy on a leveraged deal.
+
+- [ ] Leverage and coverage measured on a trailing twelve months rather than on
+      the period. On a quarterly grid the ratios divide a whole debt balance by
+      one quarter's earnings and read four times too high, which is not a
+      presentational problem but a covenant that breaches in every period
+- [ ] A delayed-draw or acquisition facility described as a commitment rather
+      than as a term loan with nothing drawn. A commitment is only legal on a
+      revolver today, so a ticking fee cannot be charged on undrawn capacity and
+      a draw cannot be checked against the capacity that exists
+- [ ] Continuous compounding of a driver across a sub-annual grid, so a growth
+      rate stated annually is not applied four times a year
+- [ ] Automated checks on every push. The suite and the type checker are run by
+      hand, which is enough for one pair of eyes and not enough for two

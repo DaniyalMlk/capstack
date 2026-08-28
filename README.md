@@ -519,6 +519,36 @@ again. The balance still capitalised at the end is not an error either: the
 paper matures in period seven and the hold runs five, so somebody writes off 3.01
 at the exit.
 
+Most deals do not sign on a reporting date. A deal closing on 16 November
+against a 31 December year end owns forty-five days of the year it closed in,
+and modelling that as a full period puts the trading in the wrong place and
+dates every column after it a month and a half early — which moves the exit
+date, the holding period and therefore the rate of return on a deal where
+nothing else changed. `projection.first_period_end` opens the grid on a stub:
+
+```console
+$ capstack project examples/ashcroft.json
+Project Ashcroft - operating case
+=================================
+
+                                    Stub       P1       P2       P3       P4       P5
+                                 2026-12  2027-12  2028-12  2029-12  2030-12  2031-12
+  -----------------------------------------------------------------------------------
+  Revenue                          62.26   541.36   576.01   643.11   673.98   700.94
+  EBITDA                            9.65    83.91    92.39   107.00   116.01   124.19
+  ...
+  Change in working capital         0.00    -3.45    -3.29    -6.37    -2.93    -2.56
+  Unlevered free cash flow          5.11    40.94    47.31    54.17    64.63    71.62
+```
+
+That zero is the whole exercise. Revenue, EBITDA and capital expenditure are
+flows and scale with the length of the period; working capital is a balance and
+does not. A model that struck the working-capital balance against six weeks of
+revenue would carry an eighth of the real one and release the difference into
+the stub as cash the business never had — which is the single largest number in
+a badly built stub and the easiest one to miss, because it makes the first
+period look better rather than worse.
+
 Two assumptions at a time, with the deal rebuilt and re-run per cell:
 
 ```console
@@ -941,6 +971,27 @@ funding table implies 2.48. `unamortised_fees` is now optional, derived from the
 paper the deal actually placed, and the memo says which of the two it printed. A
 file with a balance an accountant has already agreed still states it and is
 still believed.
+
+**A stub is part of a year, not a year of its own.** With a short period at
+close, reading an assumption series by position would hand the stub year one's
+growth and the first whole period year two's — so every column after the stub
+would be a year ahead of itself. The stub and the first whole period share a
+driver index instead. The stub trades at the rate the business is running at
+when the deal closes, prorated; growth is a whole period's assumption and is not
+applied inside it, so the base the first whole period compounds from is the base
+the deal was underwritten on.
+
+Two things follow that a model without a stub never has to decide. Interest
+needs no help, because it accrues on a day count and prorates itself — but
+contractual amortisation does: an instalment written as 1% a year is not 1% in a
+forty-five-day period, and nothing in the amortisation driver knows how long the
+period it is being read for actually is. And a stub does not certify. A
+maintenance covenant is tested on a reporting date against the last twelve
+months' earnings, and a business six weeks into a hold has no twelve months;
+measuring a whole debt balance against a part-period figure would report
+leverage several turns worse than the deal carries and breach a covenant nobody
+has breached. The stub is recorded as untested with the reason on the row, and
+the leverage line shows nothing rather than a number.
 
 ## Licence
 
