@@ -78,5 +78,5 @@ the equity that only exist because somebody has to be paid to run the business.
       fraction of original face, which is right for paper placed at close and
       leaves a delayed-draw facility repaying nothing however much is drawn on
       it later
-- [ ] An amortisation schedule for capitalised financing fees, so the balance
+- [x] An amortisation schedule for capitalised financing fees, so the balance
       written off at a refinancing is derived rather than stated in the file

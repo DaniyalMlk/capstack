@@ -462,7 +462,7 @@ $ capstack report examples/thornbury.json
 
   200.9 of paper was retired early at a cash cost of 4.9. The lower coupon
   does not earn back that over the hold that remains: 2.5 of interest saved.
-  A further 2.4 of capitalised fees was written off, which is a charge
+  A further 2.5 of capitalised fees was written off, which is a charge
   against earnings and not against cash.
 
     Face retired early                 200.9
@@ -470,7 +470,7 @@ $ capstack report examples/thornbury.json
     Call premiums paid                   2.0
     Cost of the exercise                 4.9   premium, fees and discount
     Interest saved over the remainder    2.5   undiscounted, before amortisation
-    Fees written off                     2.4   non-cash; no balance here moves
+    Fees written off                     2.5   non-cash; derived from the capitalised balance
 
     Term Loan B repricing took 200.9 out at 7.7% and replaced it at 6.4%,
     saving 2.5 a period with 1 of them left. Over that remainder the saving
@@ -483,6 +483,41 @@ not clear, because the premium and the fees are paid at once while the saving
 arrives a period at a time and there is only one period left. The example ships
 with a decision the model argues against, which is more useful than one where
 everything works.
+
+That write-off is derived rather than stated. What each tranche was placed with
+— the arrangement fee charged on face and the discount it cleared at — is
+released across the life of the paper, and `capstack fees` shows the release and
+what the money actually costs once it is counted:
+
+```console
+$ capstack fees examples/kestrel.json
+Project Kestrel - capitalised financing costs
+=============================================
+
+                       P1         P2         P3         P4         P5
+                  2027-09    2028-09    2029-09    2030-09    2031-09
+  -------------------------------------------------------------------
+  Charge for the period
+  Unitranche         1.96       2.13       2.32       2.53       2.76
+
+  Balance remaining
+  Unitranche        12.74      10.61       8.29       5.77       3.01
+
+  Cost of the money
+                    coupon   effective    uplift  method
+    Unitranche       9.65%      10.48%       83bp  effective interest
+
+    Capitalised at close                     14.70
+    Released if the paper runs to term       11.69
+    Still capitalised at the end              3.01
+```
+
+The unitranche is quoted at 9.65% and costs 10.48%. Eighty-three basis points is
+not a rounding difference on 420 of paper, and it is invisible in a model that
+puts the fees on the uses side of the funding table and never looks at them
+again. The balance still capitalised at the end is not an error either: the
+paper matures in period seven and the hold runs five, so somebody writes off 3.01
+at the exit.
 
 Two assumptions at a time, with the deal rebuilt and re-run per cell:
 
@@ -880,6 +915,32 @@ which means face drawn at the end of one period first amortises in the next,
 because the instalment for a period is struck on the basis that period opened
 on. The schedule prints the basis wherever it moves, so a step in the instalment
 has a visible cause.
+
+**Capitalised financing costs are released over the life of the paper, not the
+life of the model.** Arrangement fees and original issue discount are one
+adjustment to what the debt is worth, not two, and they are a cost of borrowing
+the money rather than a cost of the period the cheque was written in. The
+general method is effective interest: solve the rate at which the contractual
+cash flows discount back to the net proceeds, and charge the gap between that
+rate and the coupon. On a bullet the charge rises as the discount unwinds
+towards face; on an amortising loan it falls, because principal comes off faster
+than the discount closes. A straight line is neither, which is why it is offered
+as a choice rather than as the default — and why it is what a revolver gets
+regardless, having no principal profile to solve a rate against.
+
+The profile the rate is solved against is contractual: the amortisation schedule
+and the bullet at maturity, never the swept path. A borrower who sweeps hard in
+year one has not renegotiated the rate on the money it borrowed, and a profile
+that included the sweep would solve a different effective rate for every
+operating case the same loan was run against.
+
+The point of carrying the balance is that a refinancing writes it off. That
+figure used to be typed into the deal file, and a figure a reader cannot check
+is a figure that will eventually be wrong: Thornbury asserted 2.40 where its own
+funding table implies 2.48. `unamortised_fees` is now optional, derived from the
+paper the deal actually placed, and the memo says which of the two it printed. A
+file with a balance an accountant has already agreed still states it and is
+still believed.
 
 ## Licence
 
