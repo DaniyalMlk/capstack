@@ -1314,10 +1314,15 @@ class DebtSchedule:
             rate = structure.sweep_rate
             if grid is not None and ebitda is not None:
                 # The certificate for the period just ended: debt at the start
-                # of this period against the earnings of the one before it.
+                # of this period against the earnings of the one before it. A
+                # stub does not certify — six weeks of earnings is not the
+                # twelve months a compliance certificate is struck on — so the
+                # period after a stub falls back to the level the deal was
+                # priced at, exactly as the first period does.
+                previous = periods[i - 1] if i > 0 else None
                 earnings = (
                     money(ebitda[i - 1])
-                    if i > 0
+                    if previous is not None and not previous.is_stub
                     else money(opening_ebitda if opening_ebitda is not None else ebitda[0])
                 )
                 debt = sum(balances.values(), ZERO)

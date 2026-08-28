@@ -267,6 +267,25 @@ def _observe(
     threshold = covenant.threshold_at(index)
     ebitda = operating.ebitda
 
+    # A stub is not a test date. A maintenance covenant is certified on a
+    # reporting date against the last twelve months' earnings, and a business
+    # six weeks into a hold has no twelve months to certify — measuring debt
+    # against a part-period figure would report leverage several turns worse
+    # than the deal carries and breach a covenant nobody has breached.
+    if debt.period.is_stub:
+        return CovenantObservation(
+            covenant=covenant.name,
+            measure=covenant.measure,
+            period=debt.period,
+            tested=False,
+            threshold=threshold,
+            actual=None,
+            passes=True,
+            ebitda=ebitda,
+            ebitda_at_breach=None,
+            note="stub period; no twelve months to certify against",
+        )
+
     if not covenant.tests(index):
         return CovenantObservation(
             covenant=covenant.name,
@@ -398,7 +417,7 @@ class CovenantReport:
         # Ordered by period and then by covenant, because the page is read down
         # a column: every test for one period before the next period's.
         observations = tuple(
-            _observe(covenant, i, schedule[i], model[i])
+            _observe(covenant, schedule[i].period.driver_index, schedule[i], model[i])
             for i in range(len(schedule))
             for covenant in covenants
         )
