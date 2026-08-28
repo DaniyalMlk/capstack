@@ -35,6 +35,7 @@ be checked where one that is typed in cannot.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
@@ -300,6 +301,7 @@ class FeeSchedule:
         *,
         periods_per_year: int = 1,
         base_rate: Money | None = None,
+        has_stub: bool = False,
         method: FeeMethod = FeeMethod.EFFECTIVE_INTEREST,
     ) -> FeeSchedule:
         """Amortise each tranche's capitalised balance across ``periods``.
@@ -317,6 +319,13 @@ class FeeSchedule:
         ``method`` says. There is no principal profile to solve a rate against —
         the fee buys a commitment for a term, and the term is what gets
         consumed.
+
+        ``has_stub`` says the first of ``periods`` is a short one at close. The
+        release runs over whole periods, so a grid with a stub carries one more
+        column than the paper has periods of life, and the last column shows
+        whatever is left rather than a period of release that is not there. The
+        stub itself releases nothing: capitalising a cost and beginning to
+        release it in the same instant is a distinction without a period.
         """
         if periods <= 0:
             raise ValueError("a fee schedule needs at least one period")
@@ -336,17 +345,34 @@ class FeeSchedule:
                     f"{tranche.name}: a negative capitalised cost is a premium, and "
                     f"paper placed above par is not modelled here"
                 )
-            rows.append(
-                _amortise(
-                    tranche,
-                    amount,
-                    periods,
-                    periods_per_year=periods_per_year,
-                    base_rate=base_rate,
-                    method=method,
-                )
+            released = _amortise(
+                tranche,
+                amount,
+                periods - 1 if has_stub else periods,
+                periods_per_year=periods_per_year,
+                base_rate=base_rate,
+                method=method,
             )
+            rows.append(_with_stub(released) if has_stub else released)
         return cls(tranches=tuple(rows))
+
+
+def _with_stub(released: TrancheFees) -> TrancheFees:
+    """Put a column in front that releases nothing.
+
+    The stub carries the balance it was capitalised at. Nothing is written down
+    between signing the fee letter and drawing the money, and a first column
+    that released a sliver would say otherwise.
+    """
+    opening = released.periods[0].opening if released.periods else ZERO
+    stub = FeePeriod(index=0, opening=opening, charge=ZERO, closing=opening)
+    shifted = tuple(
+        FeePeriod(
+            index=p.index + 1, opening=p.opening, charge=p.charge, closing=p.closing
+        )
+        for p in released.periods
+    )
+    return dataclasses.replace(released, periods=(stub,) + shifted)
 
 
 def _straight_line(amount: Money, life: int, periods: int) -> list[FeePeriod]:
