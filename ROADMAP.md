@@ -74,7 +74,7 @@ the equity that only exist because somebody has to be paid to run the business.
       unamortised financing fees written off
 - [ ] A stub period at close, so a deal signing in November is not modelled as
       though it closed on the first day of the year
-- [ ] Contractual amortisation on face drawn after close. Amortisation is a
+- [x] Contractual amortisation on face drawn after close. Amortisation is a
       fraction of original face, which is right for paper placed at close and
       leaves a delayed-draw facility repaying nothing however much is drawn on
       it later

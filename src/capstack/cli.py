@@ -494,6 +494,10 @@ def _schedule_report(deal: Deal) -> dict[str, Any]:
                 "interest": {
                     row.name: _amount_str(row.cash_interest) for row in period.tranches
                 },
+                "amortisation_basis": {
+                    row.name: _amount_str(row.amortisation_basis)
+                    for row in period.tranches
+                },
             }
             for i, period in enumerate(schedule)
         ],
@@ -558,6 +562,26 @@ def _print_schedule(report: dict[str, Any]) -> None:
     print("  Closing balances")
     for name in report["tranches"]:
         print(row(name, [_format_money(Decimal(p["balances"][name])) for p in periods]))
+
+    # The face the instalments were struck against, shown only where it moved.
+    # On a deal with no draws after close it is the funding table repeated in a
+    # second place, which is a line of attention spent to learn nothing.
+    if any(
+        len({p["amortisation_basis"][name] for p in periods}) > 1
+        for name in report["tranches"]
+    ):
+        print()
+        print("  Amortising face")
+        for name in report["tranches"]:
+            print(
+                row(
+                    name,
+                    [
+                        _format_money(Decimal(p["amortisation_basis"][name]))
+                        for p in periods
+                    ],
+                )
+            )
 
     print()
     print(row("Leverage", [f"{p['leverage']:.2f}x" for p in periods]))

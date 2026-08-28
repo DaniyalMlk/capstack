@@ -864,6 +864,23 @@ proceeds understates leverage and understates every interest payment that
 follows it, because interest accrues on what is owed rather than on what was
 received.
 
+**Amortisation is struck against a basis, and the basis is a ledger.** A credit
+agreement writes the instalment as a fraction of face — 1% a year on a term loan
+means 1% of what was borrowed, not 1% of what is left, which is why a sweep
+running ahead of the schedule does not reduce what is contractually due next
+period. Reading "what was borrowed" as the face drawn at close is right for
+paper placed at close and wrong in both directions for anything else: a
+delayed-draw facility repays nothing however much is taken down on it later, an
+incremental facility grows the balance without growing the instalment, and a
+facility retired at a refinancing keeps amortising against face that no longer
+exists. So the basis is carried across the hold rather than read off the
+tranche. It opens at the face drawn at close, rises by incremental face taken
+down at a period boundary, and goes to zero when the facility is retired —
+which means face drawn at the end of one period first amortises in the next,
+because the instalment for a period is struck on the basis that period opened
+on. The schedule prints the basis wherever it moves, so a step in the instalment
+has a visible cause.
+
 ## Licence
 
 MIT
