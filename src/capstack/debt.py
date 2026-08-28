@@ -940,6 +940,7 @@ def _refinance(
     *,
     index: int,
     span: int,
+    unamortised_fees: Money = ZERO,
 ) -> tuple[DebtPeriod, RefinancingOutcome]:
     """Retire a facility at the end of a solved period and draw its replacement.
 
@@ -1000,12 +1001,13 @@ def _refinance(
         for t in row.tranches
     )
     cash_after = row.closing_cash - from_cash
+    written_off = event.write_off(unamortised_fees)
     updated = replace(
         row,
         tranches=tranches,
         closing_cash=cash_after,
         call_premium=event.premium_on(balance),
-        fees_written_off=event.unamortised_fees,
+        fees_written_off=written_off,
         refinancing_from_cash=from_cash,
     )
     return updated, RefinancingOutcome(
@@ -1017,6 +1019,7 @@ def _refinance(
         old_rate=old_rate,
         new_rate=new_rate,
         periods_remaining=span - event.period,
+        written_off=written_off,
     )
 
 
@@ -1226,6 +1229,7 @@ class DebtSchedule:
         recapitalisations: Sequence[Recapitalisation] = (),
         acquisitions: Sequence[AddOn] = (),
         refinancings: Sequence[Refinancing] = (),
+        write_offs: dict[int, Money] | None = None,
     ) -> DebtSchedule:
         """Roll the structure forward, one period at a time.
 
@@ -1239,6 +1243,13 @@ class DebtSchedule:
         the LTM figure the deal was priced on. Without it the first projected
         period stands in, which is the pro forma reading of the same test and is
         the closest thing available when the schedule is run on its own.
+
+        ``write_offs`` supplies the unamortised capitalised cost on the paper a
+        refinancing takes out, keyed by the period the takeout lands in, for
+        events that did not state one. The schedule does not derive it — the
+        balance belongs to the funding table, one layer up, and a schedule that
+        reached for it would have to know how the paper was placed as well as
+        what it costs to carry. See :mod:`capstack.fees`.
         """
         if len(periods) != len(unlevered_cash_flows):
             raise ValueError(
@@ -1261,6 +1272,7 @@ class DebtSchedule:
         purchases = _acquisitions_by_period(
             acquisitions or (), structure, len(periods), scheduled
         )
+        write_offs = dict(write_offs or {})
         takeouts = _refinancings_by_period(
             refinancings or (),
             structure,
@@ -1333,7 +1345,12 @@ class DebtSchedule:
             takeout = takeouts.get(period.index)
             if takeout is not None:
                 row, retired = _refinance(
-                    structure, row, takeout, index=i, span=len(periods)
+                    structure,
+                    row,
+                    takeout,
+                    index=i,
+                    span=len(periods),
+                    unamortised_fees=money(write_offs.get(takeout.period, ZERO)),
                 )
                 applied_takeouts.append(retired)
 
@@ -1362,6 +1379,7 @@ class DebtSchedule:
         recapitalisations: Sequence[Recapitalisation] = (),
         acquisitions: Sequence[AddOn] = (),
         refinancings: Sequence[Refinancing] = (),
+        write_offs: dict[int, Money] | None = None,
     ) -> DebtSchedule:
         """Run the structure against an operating case."""
         return cls.run(
@@ -1374,6 +1392,7 @@ class DebtSchedule:
             recapitalisations=recapitalisations,
             acquisitions=acquisitions,
             refinancings=refinancings,
+            write_offs=write_offs,
         )
 
     # -- Aggregates ------------------------------------------------------

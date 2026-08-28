@@ -715,7 +715,7 @@ class Refinancing:
     tranche: str
     into: tuple[Draw, ...] = ()
     call_premium_rate: Money = ZERO
-    unamortised_fees: Money = ZERO
+    unamortised_fees: Money | None = None
     label: str = "Refinancing"
 
     @classmethod
@@ -726,7 +726,7 @@ class Refinancing:
         into: Sequence[Draw] = (),
         *,
         call_premium_rate: Numeric = 0,
-        unamortised_fees: Numeric = 0,
+        unamortised_fees: Numeric | None = None,
         label: str = "Refinancing",
     ) -> Refinancing:
         return cls(
@@ -734,7 +734,9 @@ class Refinancing:
             tranche=tranche,
             into=tuple(into),
             call_premium_rate=money(call_premium_rate),
-            unamortised_fees=money(unamortised_fees),
+            unamortised_fees=(
+                None if unamortised_fees is None else money(unamortised_fees)
+            ),
             label=label,
         )
 
@@ -753,7 +755,7 @@ class Refinancing:
                 f"{self.label}: a call premium of {self.call_premium_rate} of the "
                 f"balance is not a premium"
             )
-        if self.unamortised_fees < 0:
+        if self.unamortised_fees is not None and self.unamortised_fees < 0:
             raise RefinancingError(
                 f"{self.label}: a negative write-off is a credit, not a cost"
             )
@@ -769,6 +771,22 @@ class Refinancing:
 
     def __iter__(self) -> Iterator[Draw]:
         return iter(self.into)
+
+    @property
+    def states_its_write_off(self) -> bool:
+        """Whether the file put a figure on the unamortised balance.
+
+        A deal file may state it, and an older one always did. Where it does
+        not, the balance is derived from the capitalised costs the paper was
+        placed with and how long it had run — which is the reading a reader can
+        check, because it comes from the funding table rather than from an
+        assertion.
+        """
+        return self.unamortised_fees is not None
+
+    def write_off(self, derived: Money = ZERO) -> Money:
+        """The unamortised balance charged off, stated or derived."""
+        return derived if self.unamortised_fees is None else self.unamortised_fees
 
     @property
     def face(self) -> Money:
@@ -823,10 +841,18 @@ class RefinancingOutcome:
     old_rate: Money = ZERO
     new_rate: Money = ZERO
     periods_remaining: int = 0
+    #: The unamortised balance actually charged off, whether the file stated it
+    #: or the capitalised-cost schedule derived it.
+    written_off: Money = ZERO
 
     @property
     def label(self) -> str:
         return self.event.label
+
+    @property
+    def write_off_was_derived(self) -> bool:
+        """Whether the charge came from the schedule rather than from the file."""
+        return not self.event.states_its_write_off
 
     @property
     def call_premium(self) -> Money:
@@ -842,7 +868,7 @@ class RefinancingOutcome:
 
     @property
     def fees_written_off(self) -> Money:
-        return self.event.unamortised_fees
+        return self.written_off
 
     @property
     def cash_cost(self) -> Money:
