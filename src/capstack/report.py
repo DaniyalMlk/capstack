@@ -690,7 +690,11 @@ def _refinancing(deal: Deal, case: Case) -> Section:
         Line(
             "Fees written off",
             _amount(schedule.total_fees_written_off),
-            "non-cash; no balance here moves",
+            (
+                "non-cash; derived from the capitalised balance"
+                if all(e.write_off_was_derived for e in events)
+                else "non-cash; no balance here moves"
+            ),
         ),
     ]
 
