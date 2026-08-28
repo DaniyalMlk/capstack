@@ -7,7 +7,9 @@ basis with nothing else in the way.
 
 from __future__ import annotations
 
+import json
 from datetime import date
+from pathlib import Path
 
 import pytest
 
@@ -24,6 +26,12 @@ from capstack.drivers import Driver
 from capstack.events import AddOn, Draw, Recapitalisation, Refinancing
 from capstack.money import ZERO, money
 from capstack.periods import Frequency, Period, PeriodGrid
+
+from capstack.cli import main
+
+EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
+KESTREL = str(EXAMPLES / "kestrel.json")
+MERIDIAN = str(EXAMPLES / "meridian.json")
 
 CLOSE = date(2026, 1, 1)
 
@@ -326,3 +334,36 @@ class TestTheWholeHoldByHand:
         )
         assert schedule.total_repaid == money(400)
         assert schedule.closing_debt == money(600)
+
+
+class TestOnTheCommandLine:
+    """The basis as a reader of the schedule sees it."""
+
+    def test_the_json_carries_a_basis_per_tranche_per_period(self) -> None:
+        code = main(["schedule", KESTREL, "--json"])
+        assert code == 0
+
+    def test_kestrel_steps_its_instalment_with_the_recapitalisation(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        main(["schedule", KESTREL, "--json"])
+        report = json.loads(capsys.readouterr().out)
+        basis = [p["amortisation_basis"]["Unitranche"] for p in report["periods"]]
+        # Eighty of incremental face is drawn at the end of period three, so
+        # the basis steps in period four and not before.
+        assert basis[:3] == ["420.00", "420.00", "420.00"]
+        assert basis[3:] == ["500.00", "500.00"]
+        instalments = [p["mandatory_repayment"] for p in report["periods"]]
+        assert instalments[2] != instalments[3]
+
+    def test_the_block_is_printed_where_the_face_moves(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        main(["schedule", KESTREL])
+        assert "Amortising face" in capsys.readouterr().out
+
+    def test_the_block_is_silent_where_it_does_not(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        main(["schedule", MERIDIAN])
+        assert "Amortising face" not in capsys.readouterr().out
