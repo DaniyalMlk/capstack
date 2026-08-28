@@ -84,6 +84,26 @@ class Period:
             raise ValueError("period index must not be negative")
 
     @property
+    def is_stub(self) -> bool:
+        """Whether this is the short period between close and the first reporting date."""
+        return self.index == 0
+
+    @property
+    def driver_index(self) -> int:
+        """Where to read an assumption series for this period, zero-based.
+
+        A stub is not a year of its own. A deal closing in November trades six
+        weeks of the year it closed in, at that year's margin and that year's
+        capital intensity, and the first full period is still year one — so the
+        stub and the period after it read the same assumptions.
+
+        Without a stub the mapping is the identity it always was: period 1 reads
+        index 0, period 2 reads index 1, and a grid built the old way is
+        indistinguishable from one built today.
+        """
+        return max(self.index - 1, 0)
+
+    @property
     def days(self) -> int:
         return (self.end - self.start).days
 
@@ -94,7 +114,14 @@ class Period:
     @property
     def label(self) -> str:
         """A short label of the kind that would head a column."""
+        if self.is_stub:
+            return f"Stub to {self.end.isoformat()}"
         return f"P{self.index} to {self.end.isoformat()}"
+
+    @property
+    def short_label(self) -> str:
+        """What heads a narrow column: ``Stub`` or ``P3``."""
+        return "Stub" if self.is_stub else f"P{self.index}"
 
     def __str__(self) -> str:
         return self.label
@@ -115,6 +142,8 @@ class PeriodGrid:
     def __post_init__(self) -> None:
         if not self.periods:
             raise ValueError("a grid needs at least one period")
+        if any(p.is_stub for p in self.periods[1:]):
+            raise ValueError("a stub is the first period or it is not a stub")
         for earlier, later in zip(self.periods, self.periods[1:]):
             if later.start != earlier.end:
                 raise ValueError(
@@ -125,22 +154,83 @@ class PeriodGrid:
                 raise ValueError("period indices must run consecutively")
 
     @classmethod
-    def build(cls, close: date, years: int, frequency: Frequency = Frequency.ANNUAL) -> PeriodGrid:
+    def build(
+        cls,
+        close: date,
+        years: int,
+        frequency: Frequency = Frequency.ANNUAL,
+        *,
+        stub_to: date | None = None,
+    ) -> PeriodGrid:
         """Build ``years`` years of periods forward from ``close``.
 
         ``close`` is the transaction date, so it is the start of period 1 rather
         than a period in its own right.
+
+        ``stub_to`` is the first reporting date, for a deal that does not close
+        on one. A deal signing on 15 November against a 31 December year end
+        trades six weeks before its first accounts, and modelling that as a full
+        period puts the trading in the wrong place and dates every column after
+        it early — which moves the exit date, the holding period and therefore
+        the rate of return on a deal where nothing else changed.
+
+        The stub is period 0 and the whole periods that follow are anchored on
+        ``stub_to`` rather than on ``close``, so period ends fall on reporting
+        dates rather than on deal anniversaries. ``years`` counts the whole
+        periods; the stub is extra, being a fraction of the year it sits in.
+
+        A ``stub_to`` exactly one whole period after ``close`` describes no stub
+        at all, and is built as the ordinary grid rather than as a first period
+        of full length numbered zero.
         """
         if years <= 0:
             raise ValueError("projection must cover at least one year")
         count = years * frequency.periods_per_year
         step = frequency.months
-        periods = []
+        periods: list[Period] = []
+        anchor = close
+
+        if stub_to is not None:
+            if stub_to <= close:
+                raise ValueError(
+                    f"the first reporting date ({stub_to}) is on or before the close "
+                    f"date ({close}), so there is no stub between them"
+                )
+            if stub_to > add_months(close, step):
+                raise ValueError(
+                    f"a stub is shorter than a whole period, and {close} to {stub_to} "
+                    f"is longer than one {frequency}"
+                )
+            if stub_to != add_months(close, step):
+                periods.append(Period(index=0, start=close, end=stub_to))
+            anchor = stub_to
+
+        # The whole periods are numbered from one whether or not a stub sits in
+        # front of them, so a maturity or an event stated as "period 2" means
+        # the same thing in either grid.
         for i in range(count):
-            start = add_months(close, i * step)
-            end = add_months(close, (i + 1) * step)
-            periods.append(Period(index=i + 1, start=start, end=end))
+            periods.append(
+                Period(
+                    index=i + 1,
+                    start=add_months(anchor, i * step),
+                    end=add_months(anchor, (i + 1) * step),
+                )
+            )
         return cls(periods=tuple(periods), frequency=frequency)
+
+    @property
+    def has_stub(self) -> bool:
+        return self.periods[0].is_stub
+
+    @property
+    def stub(self) -> Period | None:
+        """The short period at close, if the grid has one."""
+        return self.periods[0] if self.has_stub else None
+
+    @property
+    def whole_periods(self) -> tuple[Period, ...]:
+        """Every period but the stub."""
+        return tuple(p for p in self.periods if not p.is_stub)
 
     @property
     def start(self) -> date:
