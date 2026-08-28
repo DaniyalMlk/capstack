@@ -21,6 +21,7 @@ from .outcome import Outcome
 from .report import Report, prepare
 from .returns import AmbiguousIRR, CashFlow, CashFlowStream, IRRError
 from .sensitivity import Axis, Grid, Metric, SensitivityError, format_value
+from .fees import FeeMethod
 from .spec import Deal, DealSpecError, load_deal
 from .transaction import Transaction
 
@@ -1395,6 +1396,119 @@ def _print_acquisitions(report: dict[str, Any]) -> None:
         print(f"    {label:<28}{value:>14}")
 
 
+def _fees_report(deal: Deal, method: FeeMethod) -> dict[str, Any]:
+    schedule = deal.fee_schedule(method)
+    grid = deal.grid
+    assert grid is not None  # fee_schedule refuses a deal without one
+    return {
+        "name": deal.name,
+        "method": str(method),
+        "periods": [p.end.isoformat() for p in grid],
+        "tranches": [
+            {
+                "name": t.name,
+                "capitalised": _amount_str(t.capitalised),
+                "method": str(t.method),
+                "coupon": float(t.coupon),
+                "effective_rate": float(t.effective_rate),
+                "rate_uplift": float(t.rate_uplift),
+                "charges": [_amount_str(p.charge) for p in t],
+                "balances": [_amount_str(p.closing) for p in t],
+            }
+            for t in schedule
+        ],
+        "total_capitalised": _amount_str(schedule.total_capitalised),
+        "total_charged": _amount_str(schedule.total_charged),
+        "unreleased": _amount_str(schedule.unreleased),
+        "write_offs": [
+            {
+                "label": event.label,
+                "period": event.period,
+                "tranche": event.tranche,
+                "amount": _amount_str(amount),
+            }
+            for event in deal.refinancings
+            for amount in [deal.write_offs().get(event.period)]
+            if amount is not None
+        ],
+    }
+
+
+def _print_fees(report: dict[str, Any]) -> None:
+    header = f"{report['name']} - capitalised financing costs"
+    print(header)
+    print("=" * len(header))
+    print()
+
+    rows = [t for t in report["tranches"] if Decimal(t["capitalised"]) > 0]
+    if not rows:
+        print("  Nothing was capitalised: every tranche was placed at par with no fee.")
+        return
+
+    label_width = max(len(t["name"]) for t in rows) + 2
+    column = 11
+    periods = report["periods"]
+
+    def line(label: str, cells: list[str]) -> str:
+        return "  " + label.ljust(label_width) + "".join(c.rjust(column) for c in cells)
+
+    print(line("", [f"P{i + 1}" for i in range(len(periods))]))
+    print(line("", [p[:7] for p in periods]))
+    print("  " + "-" * (label_width + column * len(periods)))
+
+    print("  Charge for the period")
+    for t in rows:
+        print(line(t["name"], [_format_money(Decimal(c)) for c in t["charges"]]))
+    print()
+    print("  Balance remaining")
+    for t in rows:
+        print(line(t["name"], [_format_money(Decimal(b)) for b in t["balances"]]))
+
+    print()
+    print("  Cost of the money")
+    width = max(len(t["name"]) for t in rows) + 2
+    print(f"    {'':<{width}}{'coupon':>10}{'effective':>12}{'uplift':>10}  method")
+    for t in rows:
+        print(
+            f"    {t['name']:<{width}}{t['coupon']:>10.2%}{t['effective_rate']:>12.2%}"
+            f"{t['rate_uplift'] * 10000:>9.0f}bp  {t['method']}"
+        )
+
+    print()
+    print(f"    {'Capitalised at close':<34}{_format_money(Decimal(report['total_capitalised'])):>12}")
+    print(f"    {'Released if the paper runs to term':<34}{_format_money(Decimal(report['total_charged'])):>12}")
+    print(f"    {'Still capitalised at the end':<34}{_format_money(Decimal(report['unreleased'])):>12}")
+
+    if report["write_offs"]:
+        print()
+        print("  Charged off early at a takeout")
+        for w in report["write_offs"]:
+            print(
+                f"    P{w['period']} {w['label']} ({w['tranche']}): "
+                f"{_format_money(Decimal(w['amount']))}"
+            )
+        print()
+        print("    The takeout ends the release. What is charged off above is")
+        print("    incurred at the takeout instead of over the periods after it,")
+        print("    which is why this schedule runs past the event rather than")
+        print("    stopping at it.")
+
+
+def _cmd_fees(args: argparse.Namespace) -> int:
+    deal = load_deal(args.file)
+    method = (
+        FeeMethod.STRAIGHT_LINE
+        if args.method == "straight-line"
+        else FeeMethod.EFFECTIVE_INTEREST
+    )
+    report = _fees_report(deal, method)
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        _print_fees(report)
+    return 0
+
+
 def _cmd_acquisitions(args: argparse.Namespace) -> int:
     deal = load_deal(args.file)
     report = _acquisitions_report(deal)
@@ -1533,6 +1647,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--json", action="store_true", help="emit JSON instead of a table"
     )
     acquisitions.set_defaults(handler=_cmd_acquisitions)
+
+    fees = sub.add_parser(
+        "fees",
+        help="capitalised financing costs, and the balance a takeout writes off",
+        description=(
+            "Release the arrangement fees and the original issue discount each "
+            "tranche was placed with across the life of the paper, and report "
+            "what a refinancing would charge off. The effective method solves "
+            "the rate the contractual flows discount back to net proceeds; the "
+            "straight line spreads the balance evenly."
+        ),
+    )
+    fees.add_argument("file", help="path to a deal file (JSON)")
+    fees.add_argument(
+        "--method",
+        choices=("effective-interest", "straight-line"),
+        default="effective-interest",
+        help="how the balance is released (default: %(default)s)",
+    )
+    fees.add_argument("--json", action="store_true", help="emit JSON instead of a table")
+    fees.set_defaults(handler=_cmd_fees)
 
     sensitivity = sub.add_parser(
         "sensitivity",
