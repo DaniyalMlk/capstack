@@ -442,6 +442,7 @@ class Deal:
             self.structure,
             capitalised,
             len(self.grid),
+            has_stub=self.grid.has_stub,
             periods_per_year=self.grid.frequency.periods_per_year,
             base_rate=self.structure.base_at(0),
             method=method,
@@ -459,9 +460,13 @@ class Deal:
             return {}
         fees = self.fee_schedule()
         # The takeout lands at the end of its period, so the balance charged
-        # off is the one left after that period's own release has run.
+        # off is the one left after that period's own release has run. A stub
+        # sits in front of period one on a grid that has one, which moves every
+        # column along by one.
+        assert self.grid is not None  # fee_schedule refuses a deal without one
+        offset = 0 if self.grid.has_stub else 1
         return {
-            event.period: fees.unamortised_at(event.tranche, event.period - 1)
+            event.period: fees.unamortised_at(event.tranche, event.period - offset)
             for event in pending
         }
 
@@ -1257,8 +1262,23 @@ def _parse_projection(data: dict[str, Any], close: date | None) -> PeriodGrid:
             f"{where}.frequency: unknown frequency {frequency_name!r}; "
             f"expected one of {', '.join(sorted(_FREQUENCIES))}"
         )
+    stub_raw = data.get("first_period_end")
+    stub_to: date | None = None
+    if stub_raw is not None:
+        try:
+            stub_to = date.fromisoformat(str(stub_raw))
+        except ValueError as exc:
+            raise DealSpecError(
+                f"{where}.first_period_end: not a date: {stub_raw!r}"
+            ) from exc
+
     try:
-        return PeriodGrid.build(close, years=years, frequency=_FREQUENCIES[frequency_name])
+        return PeriodGrid.build(
+            close,
+            years=years,
+            frequency=_FREQUENCIES[frequency_name],
+            stub_to=stub_to,
+        )
     except ValueError as exc:
         raise DealSpecError(f"{where}: {exc}") from exc
 

@@ -383,7 +383,11 @@ def _schedule(deal: Deal, case: Case) -> Section:
                     _amount(period.mandatory_repayment),
                     _amount(period.sweep_repayment),
                     _amount(period.closing_debt),
-                    _turns(
+                    # A stub is a whole balance against a fraction of a year's
+                    # earnings, which is not a leverage reading.
+                    "-"
+                    if period.period.is_stub
+                    else _turns(
                         safe_div(period.net_debt, case.model[i].ebitda, default=ZERO)
                     ),
                 )

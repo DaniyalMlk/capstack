@@ -50,6 +50,11 @@ def _parse_flow(token: str) -> CashFlow:
     return CashFlow(when=when, amount=amount, label=label)
 
 
+def _column(index: int) -> str:
+    """What heads a column: ``Stub`` for period zero, ``P3`` otherwise."""
+    return "Stub" if index == 0 else f"P{index}"
+
+
 def _format_money(value: Decimal) -> str:
     return f"{value:,.2f}"
 
@@ -303,7 +308,7 @@ def _print_projection(report: dict[str, Any]) -> None:
     def row(label: str, cells: list[str]) -> str:
         return "  " + label.ljust(label_width) + "".join(c.rjust(column) for c in cells)
 
-    print(row("", [f"P{p['index']}" for p in periods]))
+    print(row("", [_column(p["index"]) for p in periods]))
     print(row("", [p["ending"][:7] for p in periods]))
     print("  " + "-" * (label_width + column * len(periods)))
 
@@ -488,7 +493,16 @@ def _schedule_report(deal: Deal) -> dict[str, Any]:
                 "funding_shortfall": _amount_str(period.funding_shortfall),
                 "iterations": period.iterations,
                 "residual": _amount_str(period.residual),
-                "leverage": float(schedule.leverage_at(i, model[i].ebitda)),
+                # A stub has no leverage reading. The debt is a whole balance
+                # and the earnings are a fraction of a year's, so the ratio is
+                # not several turns worse than the deal carries — it is not a
+                # ratio at all, for the same reason a covenant does not test
+                # there.
+                "leverage": (
+                    None
+                    if period.period.is_stub
+                    else float(schedule.leverage_at(i, model[i].ebitda))
+                ),
                 "balances": {
                     row.name: _amount_str(row.closing) for row in period.tranches
                 },
@@ -543,7 +557,7 @@ def _print_schedule(report: dict[str, Any]) -> None:
     def row(label: str, cells: list[str]) -> str:
         return "  " + label.ljust(label_width) + "".join(c.rjust(column) for c in cells)
 
-    print(row("", [f"P{p['index']}" for p in periods]))
+    print(row("", [_column(p["index"]) for p in periods]))
     print(row("", [p["ending"][:7] for p in periods]))
     print("  " + "-" * (label_width + column * len(periods)))
 
@@ -585,7 +599,15 @@ def _print_schedule(report: dict[str, Any]) -> None:
             )
 
     print()
-    print(row("Leverage", [f"{p['leverage']:.2f}x" for p in periods]))
+    print(
+        row(
+            "Leverage",
+            [
+                "-" if p["leverage"] is None else f"{p['leverage']:.2f}x"
+                for p in periods
+            ],
+        )
+    )
     print(row("Base rate", [f"{p['base_rate']:.2%}" for p in periods]))
 
     totals = report["totals"]
@@ -701,7 +723,7 @@ def _print_covenants(report: dict[str, Any]) -> None:
     def row(label: str, cells: list[str]) -> str:
         return "  " + label.ljust(label_width) + "".join(c.rjust(column) for c in cells)
 
-    print(row("", [f"P{i}" for i in periods]))
+    print(row("", [_column(i) for i in periods]))
     print(row("", [endings[i] for i in periods]))
     print("  " + "-" * (label_width + column * len(periods)))
 
@@ -1404,6 +1426,7 @@ def _fees_report(deal: Deal, method: FeeMethod) -> dict[str, Any]:
         "name": deal.name,
         "method": str(method),
         "periods": [p.end.isoformat() for p in grid],
+        "period_indices": [p.index for p in grid],
         "tranches": [
             {
                 "name": t.name,
@@ -1452,7 +1475,7 @@ def _print_fees(report: dict[str, Any]) -> None:
     def line(label: str, cells: list[str]) -> str:
         return "  " + label.ljust(label_width) + "".join(c.rjust(column) for c in cells)
 
-    print(line("", [f"P{i + 1}" for i in range(len(periods))]))
+    print(line("", [_column(i) for i in report["period_indices"]]))
     print(line("", [p[:7] for p in periods]))
     print("  " + "-" * (label_width + column * len(periods)))
 
