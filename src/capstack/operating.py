@@ -29,6 +29,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 
+from .daycount import DayCount
 from .drivers import Driver
 from .money import ONE, ZERO, Money, Numeric, money, safe_div
 from .periods import Period, PeriodGrid
@@ -355,6 +356,7 @@ class OperatingModel:
         opening_revenue: Numeric,
         opening_net_working_capital: Numeric | None = None,
         acquisitions: Sequence[AcquiredStream] = (),
+        day_count: DayCount = DayCount.ACT_365F,
     ) -> OperatingModel:
         """Roll the case forward across ``grid``.
 
@@ -372,6 +374,11 @@ class OperatingModel:
         the honest form of one: a bolt-on that needs materially more capital per
         pound of revenue than the platform is a different business, and belongs
         in the file as a second case rather than as a line in this one.
+
+        ``day_count`` measures a stub period only. It is separate from the one
+        the debt schedule accrues on, and defaults to actual days over 365
+        because a business trades on calendar days rather than on whatever the
+        credit agreement negotiated for its interest.
         """
         revenue = money(opening_revenue)
         if revenue < 0:
@@ -397,23 +404,41 @@ class OperatingModel:
         rows: list[OperatingPeriod] = []
         for i in range(count):
             period = grid[i]
+            j = period.driver_index
+
+            # A stub trades at the rate the business is running at when the deal
+            # closes, for as much of the year as it owns. Growth is a full
+            # period's assumption and is not applied inside it, so the base the
+            # first whole period compounds from is the base the deal was
+            # underwritten on — six weeks of ownership does not advance the
+            # operating case by a year.
+            if period.is_stub:
+                elapsed = period.year_fraction(day_count)
+            else:
+                organic = organic * (ONE + assumptions.revenue_growth.at(j))
+                elapsed = ONE
 
             # The organic base is what carries forward. Acquired revenue is
             # added to the period's total but never to the base, because each
             # stream compounds from its own purchase run-rate; folding it back
             # in would grow it a second time next period.
-            organic = organic * (ONE + assumptions.revenue_growth.at(i))
             acquired_revenue = ZERO
             acquired_ebitda = ZERO
             for stream in streams:
-                contributed = stream.revenue_at(i, assumptions.revenue_growth)
+                contributed = stream.revenue_at(j, assumptions.revenue_growth)
                 acquired_revenue += contributed
-                acquired_ebitda += contributed * stream.margin + stream.synergies_at(i)
+                acquired_ebitda += contributed * stream.margin + stream.synergies_at(j)
 
-            revenue = organic + acquired_revenue
-            ebitda = organic * assumptions.ebitda_margin.at(i) + acquired_ebitda
+            # Flows scale with the length of the period. The annualised total
+            # is kept alongside because the balance-sheet lines are struck
+            # against it rather than against what the period actually traded.
+            annualised = organic + acquired_revenue
+            revenue = annualised * elapsed
+            ebitda = (
+                organic * assumptions.ebitda_margin.at(j) + acquired_ebitda
+            ) * elapsed
 
-            da = revenue * assumptions.da_rate.at(i)
+            da = revenue * assumptions.da_rate.at(j)
             ebit = ebitda - da
 
             tax = apply_carryforward(
@@ -425,9 +450,16 @@ class OperatingModel:
             carryforward = tax.closing_carryforward
 
             nopat = ebit - tax.cash_tax
-            capex = revenue * assumptions.capex_rate.at(i)
+            capex = revenue * assumptions.capex_rate.at(j)
 
-            closing_nwc = revenue * assumptions.nwc_rate.at(i)
+            # Working capital is a balance, not a flow, and it is the one line
+            # a short period gets catastrophically wrong if it is treated as
+            # one. Six weeks of revenue at a 15% working-capital rate implies a
+            # balance an eighth of the real one, and the difference is released
+            # into the stub as cash the business never had. So the balance is
+            # struck against the annualised figure and only the *movement* in it
+            # reaches the cash flow, which is what a movement was always for.
+            closing_nwc = annualised * assumptions.nwc_rate.at(j)
             change_in_nwc = closing_nwc - nwc
             nwc = closing_nwc
 
