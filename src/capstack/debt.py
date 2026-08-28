@@ -67,6 +67,7 @@ from .operating import OperatingModel
 from .periods import Period
 
 __all__ = [
+    "AmortisationBasis",
     "CapitalStructure",
     "CircularityNotResolved",
     "DebtPeriod",
@@ -161,9 +162,11 @@ class Tranche:
 
     ``cash_rate`` and ``pik_rate`` are annual. For a floating tranche they are
     margins over the structure's base rate; for a fixed one they are the coupon
-    itself. ``amortisation`` is a fraction of the *original* face per period,
-    which is how a credit agreement writes it — 1% a year on a term loan means
-    1% of what was drawn at close, not 1% of what is left.
+    itself. ``amortisation`` is a fraction of face per period, which is how a
+    credit agreement writes it — 1% a year on a term loan means 1% of what was
+    borrowed, not 1% of what is left. The face it is struck against is the face
+    drawn at close plus anything drawn on the name since; the schedule carries
+    that forward in an :class:`AmortisationBasis`.
     """
 
     name: str
@@ -275,18 +278,24 @@ class Tranche:
             return self.cash_rate
         return max(base, self.floor) + self.cash_rate
 
-    def scheduled_amortisation(self, index: int) -> Money:
+    def scheduled_amortisation(self, index: int, basis: Money | None = None) -> Money:
         """Contractual repayment for period ``index``, as an amount.
 
-        Expressed against the original face, so a sweep that runs ahead of the
-        schedule does not reduce what is contractually due next period. Credit
-        agreements differ on whether it should — many allow prepayments to be
-        applied against future instalments in order — and the conservative
-        reading is the one modelled here.
+        Struck against face rather than against the balance outstanding, so a
+        sweep that runs ahead of the schedule does not reduce what is
+        contractually due next period. Credit agreements differ on whether it
+        should — many allow prepayments to be applied against future instalments
+        in order — and the conservative reading is the one modelled here.
+
+        ``basis`` is the face the instalment is measured on. It defaults to the
+        face drawn at close, which is the whole story for paper placed at close
+        and only part of it for anything drawn later; see
+        :class:`AmortisationBasis` for how the schedule carries it forward.
         """
         if self.amortisation is None:
             return ZERO
-        return self.face * self.amortisation.at(index)
+        face = self.face if basis is None else basis
+        return face * self.amortisation.at(index)
 
     def has_matured(self, index: int) -> bool:
         """Whether period ``index`` is at or past this tranche's maturity.
@@ -308,6 +317,73 @@ class Tranche:
         if not self.is_revolving or self.has_matured(index):
             return ZERO
         return self.commitment - drawn
+
+
+class AmortisationBasis:
+    """The face each tranche's instalment is struck against, carried forward.
+
+    A credit agreement writes amortisation as a fraction of face — 1% a year on
+    a term loan means 1% of what was borrowed, not 1% of what is left. Reading
+    "what was borrowed" as the face drawn at close is right for paper placed at
+    close and wrong for everything else, in both directions.
+
+    It understates. A delayed-draw facility described with nothing drawn at
+    close has a basis of zero, so it repays nothing however much is taken down
+    on it later; an incremental facility drawn on an existing name grows the
+    balance without growing the instalment, so a term loan that doubles in size
+    still repays 1% of the original.
+
+    And it overstates. A facility retired at a refinancing keeps a basis it no
+    longer has any face behind, so the schedule carries a mandatory repayment on
+    paper that has been taken out.
+
+    So the basis is a ledger rather than a property of the tranche. It opens at
+    the face drawn at close, rises by incremental face taken down at a period
+    boundary, and goes to zero when the facility is retired. Draws are applied
+    *after* the period they land in has been solved, which is what makes face
+    drawn at the end of period two first amortise in period three — the
+    instalment for a period is struck on the basis that period opened on.
+    """
+
+    __slots__ = ("_basis",)
+
+    def __init__(self, structure: CapitalStructure) -> None:
+        self._basis: dict[str, Money] = {t.name: t.face for t in structure}
+
+    def at(self, name: str) -> Money:
+        """The face period instalments are currently measured against."""
+        return self._basis[name]
+
+    def snapshot(self) -> dict[str, Money]:
+        return dict(self._basis)
+
+    def draw(self, name: str, amount: Money) -> None:
+        """Add face taken down on an existing name.
+
+        Incremental face amortises on the same terms as the paper it joins,
+        which is what an incremental facility documented under an existing
+        credit agreement actually does — it is fungible with the original by
+        construction, so it cannot repay on a different schedule.
+        """
+        if amount <= 0:
+            return
+        self._basis[name] += amount
+
+    def retire(self, name: str) -> None:
+        """Drop the basis to zero because the facility has been taken out.
+
+        Zero rather than reduced by the balance repaid: a refinancing retires
+        the facility, not a slice of it, and what remains of the original face
+        is a claim the replacement paper now carries on its own terms.
+        """
+        self._basis[name] = ZERO
+
+    def apply(self, row: DebtPeriod) -> None:
+        """Carry the basis across a solved period's events, in the order they ran."""
+        for tranche in row.tranches:
+            if tranche.refinancing_repayment > 0:
+                self.retire(tranche.name)
+            self.draw(tranche.name, tranche.incremental_draw)
 
 
 @dataclass(frozen=True, slots=True)
@@ -591,6 +667,7 @@ class TranchePeriod:
     acquisition: Money = ZERO
     refinancing_draw: Money = ZERO
     refinancing_repayment: Money = ZERO
+    amortisation_basis: Money = ZERO
 
     @property
     def incremental_draw(self) -> Money:
@@ -1192,6 +1269,7 @@ class DebtSchedule:
         )
 
         balances = {t.name: t.face for t in structure.tranches}
+        basis = AmortisationBasis(structure)
         cash = money(opening_cash)
         if cash < 0:
             raise ValueError("opening cash must not be negative")
@@ -1227,6 +1305,7 @@ class DebtSchedule:
                 opening_cash=cash,
                 unlevered_free_cash_flow=money(unlevered_cash_flows[i]),
                 sweep_rate=rate,
+                basis=basis.snapshot(),
                 certified_leverage=certified,
             )
             event = scheduled.get(period.index)
@@ -1259,6 +1338,7 @@ class DebtSchedule:
                 applied_takeouts.append(retired)
 
             rows.append(row)
+            basis.apply(row)
             balances = {t.name: t.closing for t in row.tranches}
             cash = row.closing_cash
 
@@ -1474,6 +1554,7 @@ def _one_pass(
     unlevered_free_cash_flow: Money,
     guess: dict[str, Money],
     sweep_rate: Money,
+    basis: dict[str, Money] | None = None,
     certified_leverage: Money | None = None,
 ) -> DebtPeriod:
     """Run a period once, taking ``guess`` as the closing balances interest accrues on.
@@ -1518,7 +1599,8 @@ def _one_pass(
         if matured:
             due = owed
         else:
-            due = min(tranche.scheduled_amortisation(index), owed)
+            face = tranche.face if basis is None else basis[tranche.name]
+            due = min(tranche.scheduled_amortisation(index, face), owed)
         mandatory[tranche.name] = max(due, ZERO)
 
     cash_cost = sum(cash_interest.values(), ZERO) + sum(undrawn_fee.values(), ZERO)
@@ -1602,6 +1684,7 @@ def _one_pass(
                 - mandatory[t.name]
                 - sweep[t.name]
             ),
+            amortisation_basis=t.face if basis is None else basis[t.name],
         )
         for t in structure
     )
@@ -1632,6 +1715,7 @@ def _solve_period(
     opening_cash: Money,
     unlevered_free_cash_flow: Money,
     sweep_rate: Money,
+    basis: dict[str, Money] | None = None,
     certified_leverage: Money | None = None,
 ) -> DebtPeriod:
     """Find the closing balances consistent with the interest they generate.
@@ -1663,6 +1747,7 @@ def _solve_period(
             unlevered_free_cash_flow=unlevered_free_cash_flow,
             guess=opening,
             sweep_rate=sweep_rate,
+            basis=basis,
             certified_leverage=certified_leverage,
         )
 
@@ -1679,6 +1764,7 @@ def _solve_period(
             unlevered_free_cash_flow=unlevered_free_cash_flow,
             guess=guess,
             sweep_rate=sweep_rate,
+            basis=basis,
             certified_leverage=certified_leverage,
         )
         produced = {row.name: row.closing for row in result.tranches}
