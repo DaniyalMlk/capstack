@@ -179,7 +179,6 @@
       "label": "Term Loan B repricing",
       "tranche": "Term Loan B",
       "call_premium_rate": 0.01,
-      "unamortised_fees": 2.4,
       "into": [
         {
           "tranche": "Repriced term loan",

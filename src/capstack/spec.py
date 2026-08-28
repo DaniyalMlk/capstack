@@ -34,6 +34,7 @@ from .debt import (
     TrancheKind,
 )
 from .drivers import Driver
+from .fees import FeeMethod, FeeSchedule
 from .events import (
     AddOn,
     AddOnError,
@@ -413,6 +414,57 @@ class Deal:
             + self.transaction.cash_to_balance_sheet
         )
 
+    def fee_schedule(self, method: FeeMethod = FeeMethod.EFFECTIVE_INTEREST) -> FeeSchedule:
+        """Release the capitalised financing costs across the projection.
+
+        The amounts come from the funding table, which is the only place that
+        knows how each tranche was placed: the arrangement fee charged on face
+        and the discount it cleared at, carried together because they are one
+        adjustment to what the paper is worth on the balance sheet.
+
+        Floating tranches are priced off the base rate at close rather than off
+        the curve. The effective rate is a property of the paper as it was
+        placed, and re-solving it every period as the forward curve moves would
+        restate a historic cost with information that arrived later.
+        """
+        if self.structure is None or self.grid is None:
+            raise DealSpecError(
+                "capitalised costs are released across a projection, so this needs "
+                'both a "structure" and a "projection" block'
+            )
+        priced = {t.name: t for t in self.transaction.debt}
+        capitalised = {
+            t.name: priced[t.name].financing_fee + priced[t.name].original_issue_discount
+            for t in self.structure
+            if t.name in priced
+        }
+        return FeeSchedule.build(
+            self.structure,
+            capitalised,
+            len(self.grid),
+            periods_per_year=self.grid.frequency.periods_per_year,
+            base_rate=self.structure.base_at(0),
+            method=method,
+        )
+
+    def write_offs(self) -> dict[int, Money]:
+        """The unamortised balance each takeout charges off, by period.
+
+        Only for the events that did not state one. A file that put a figure in
+        keeps it, and the schedule is never handed a second opinion to choose
+        between.
+        """
+        pending = [r for r in self.refinancings if not r.states_its_write_off]
+        if not pending:
+            return {}
+        fees = self.fee_schedule()
+        # The takeout lands at the end of its period, so the balance charged
+        # off is the one left after that period's own release has run.
+        return {
+            event.period: fees.unamortised_at(event.tranche, event.period - 1)
+            for event in pending
+        }
+
     def schedule(self, model: OperatingModel | None = None) -> DebtSchedule:
         """Run the capital structure against the operating case.
 
@@ -446,6 +498,7 @@ class Deal:
                 recapitalisations=self.recapitalisations,
                 acquisitions=self.acquisitions,
                 refinancings=self.refinancings,
+                write_offs=self.write_offs(),
             )
         except RecapitalisationError as exc:
             raise DealSpecError(f"recapitalisations: {exc}") from exc
@@ -888,13 +941,12 @@ def _parse_acquisition(data: Any, index: int, periods: int) -> AddOn:
 def _parse_refinancing(data: Any, index: int) -> Refinancing:
     """Read one takeout: the facility retired, and the paper that replaces it.
 
-    ``unamortised_fees`` is stated rather than derived. The engine capitalises
-    financing fees at close but does not carry an amortisation schedule for
-    them — that is an accounting layer this model does not have — and inventing
-    a straight-line write-down to derive the figure would produce a number
-    nobody had agreed to. A file that knows the balance says so; one that does
-    not leaves it at zero and reports no write-off, which is honest about what
-    it does not know.
+    ``unamortised_fees`` may be stated or left out. Left out, it is derived
+    from the capitalised-cost schedule the deal builds off its own funding
+    table: what the paper was placed with, released over its life, read at the
+    period the takeout lands in. A file that has a figure of its own — a
+    balance carried over from an earlier model, or one an accountant has
+    already agreed — states it and is believed.
     """
     where = f"refinancings[{index}]"
     if not isinstance(data, dict):
@@ -919,7 +971,11 @@ def _parse_refinancing(data: Any, index: int) -> Refinancing:
                 for i, item in enumerate(into_raw)
             ),
             call_premium_rate=_optional_amount(data, "call_premium_rate", where),
-            unamortised_fees=_optional_amount(data, "unamortised_fees", where),
+            unamortised_fees=(
+                _amount(data["unamortised_fees"], f"{where}.unamortised_fees")
+                if data.get("unamortised_fees") is not None
+                else None
+            ),
             label=str(data.get("label", "Refinancing")),
         )
     except (RefinancingError, RecapitalisationError) as exc:
