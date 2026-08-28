@@ -382,8 +382,12 @@ def _amortise(
     """Build one tranche's release schedule."""
     coupon_annual = tranche.rate_at(base_rate if base_rate is not None else ZERO)
     coupon = coupon_annual / money(periods_per_year)
-    life = periods if tranche.maturity is None else min(tranche.maturity - 1, periods)
-    life = max(life, 1)
+    # The life is the paper's, not the projection's. A seven-year loan on a
+    # five-year hold releases a seventh of the balance a year and still has two
+    # years of it capitalised when the model ends — which is exactly the balance
+    # somebody writes off at the exit, and a release compressed into the grid
+    # would report it as already gone.
+    life = max(periods if tranche.maturity is None else tranche.maturity - 1, 1)
 
     if amount == 0:
         return TrancheFees(
