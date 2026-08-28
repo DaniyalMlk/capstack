@@ -304,9 +304,20 @@ class Tranche:
         series is read, so period one is index zero and a tranche maturing in
         period three has matured from index two onward.
         """
-        return self.maturity is not None and index + 1 >= self.maturity
+        return self.matured_at(index + 1)
 
-    def undrawn_at(self, drawn: Money, index: int = 0) -> Money:
+    def matured_at(self, period: int) -> bool:
+        """Whether the period *numbered* ``period`` is at or past maturity.
+
+        Stated in period numbers rather than in positions because that is how a
+        credit agreement states it, and because a grid opening on a stub has a
+        period zero — paper maturing in period two matures at the end of the
+        second whole period whether or not six weeks of trading sit in front of
+        the first.
+        """
+        return self.maturity is not None and period >= self.maturity
+
+    def undrawn_at(self, drawn: Money, index: int = 0, *, period: int | None = None) -> Money:
         """Commitment not currently drawn. Zero for anything but a revolver.
 
         A matured facility has no commitment left. Repaying it does not make it
@@ -314,7 +325,10 @@ class Tranche:
         past maturity will happily do — repay the balance in full and redraw it
         in the same period, forever.
         """
-        if not self.is_revolving or self.has_matured(index):
+        matured = (
+            self.has_matured(index) if period is None else self.matured_at(period)
+        )
+        if not self.is_revolving or matured:
             return ZERO
         return self.commitment - drawn
 
@@ -875,7 +889,7 @@ def _by_period(
                     f"{', '.join(repr(n) for n in sorted(known))}"
                 )
             tranche = structure.tranche(draw.tranche)
-            if tranche.has_matured(event.period - 1):
+            if tranche.matured_at(event.period):
                 raise RecapitalisationError(
                     f"{event.label}: {draw.tranche} has matured by period "
                     f"{event.period}, so there is nothing left to draw on it"
@@ -1066,7 +1080,7 @@ def _acquisitions_by_period(
                     f"draw on; the structure holds "
                     f"{', '.join(repr(n) for n in sorted(known))}"
                 )
-            if structure.tranche(draw.tranche).has_matured(event.period - 1):
+            if structure.tranche(draw.tranche).matured_at(event.period):
                 raise AddOnError(
                     f"{event.label}: {draw.tranche} has matured by period "
                     f"{event.period}, so there is nothing left to draw on it"
@@ -1268,15 +1282,20 @@ class DebtSchedule:
                 f"{len(periods)} periods against {len(ebitda)} EBITDA figures"
             )
 
-        scheduled = _by_period(recapitalisations or (), structure, len(periods))
+        # Events are described in period numbers, and a grid opening on a stub
+        # has one fewer whole period than it has columns. Validating against the
+        # column count would accept an event numbered past the last period there
+        # is, and it would then simply never fire.
+        span = max(p.index for p in periods)
+        scheduled = _by_period(recapitalisations or (), structure, span)
         purchases = _acquisitions_by_period(
-            acquisitions or (), structure, len(periods), scheduled
+            acquisitions or (), structure, span, scheduled
         )
         write_offs = dict(write_offs or {})
         takeouts = _refinancings_by_period(
             refinancings or (),
             structure,
-            len(periods),
+            span,
             frozenset(scheduled) | frozenset(purchases),
         )
 
@@ -1318,6 +1337,7 @@ class DebtSchedule:
                 unlevered_free_cash_flow=money(unlevered_cash_flows[i]),
                 sweep_rate=rate,
                 basis=basis.snapshot(),
+                amortisation_scale=_amortisation_scale(periods, i, structure.day_count),
                 certified_leverage=certified,
             )
             event = scheduled.get(period.index)
@@ -1349,7 +1369,7 @@ class DebtSchedule:
                     row,
                     takeout,
                     index=i,
-                    span=len(periods),
+                    span=span,
                     unamortised_fees=money(write_offs.get(takeout.period, ZERO)),
                 )
                 applied_takeouts.append(retired)
@@ -1563,6 +1583,27 @@ class DebtSchedule:
         return safe_div(self.periods[index].net_debt, money(ebitda), default=ZERO)
 
 
+def _amortisation_scale(
+    periods: Sequence[Period], index: int, day_count: DayCount
+) -> Money:
+    """How much of a whole period's instalment a period of this length owes.
+
+    One for every period but a stub. A stub owes the fraction of a whole period
+    it actually covers, measured against the first whole period on the same grid
+    rather than against a nominal year — the grid is the only thing that knows
+    whether a period is a quarter or a month, and asking it costs nothing.
+    """
+    period = periods[index]
+    if not period.is_stub:
+        return ONE
+    whole = next((p for p in periods if not p.is_stub), None)
+    if whole is None:
+        return ONE
+    return safe_div(
+        period.year_fraction(day_count), whole.year_fraction(day_count), default=ONE
+    )
+
+
 def _one_pass(
     structure: CapitalStructure,
     *,
@@ -1574,6 +1615,7 @@ def _one_pass(
     guess: dict[str, Money],
     sweep_rate: Money,
     basis: dict[str, Money] | None = None,
+    amortisation_scale: Money = ONE,
     certified_leverage: Money | None = None,
 ) -> DebtPeriod:
     """Run a period once, taking ``guess`` as the closing balances interest accrues on.
@@ -1581,9 +1623,16 @@ def _one_pass(
     Under :attr:`InterestBasis.OPENING` the guess is ignored and the pass is the
     answer. Under ``AVERAGE`` it is one step of the iteration that finds the
     balances consistent with the interest they generate.
+
+    ``amortisation_scale`` shortens the contractual instalment for a period
+    shorter than a whole one. Interest needs no such help — it accrues on a day
+    count and prorates itself — but an instalment written as 1% a year is not 1%
+    in a forty-six-day stub, and nothing in the amortisation driver knows how
+    long the period it is being read for actually is.
     """
     year_fraction = period.year_fraction(structure.day_count)
-    base = structure.base_at(index)
+    driver_index = period.driver_index
+    base = structure.base_at(driver_index)
     half = money(2)
 
     accrual_base: dict[str, Money] = {}
@@ -1594,7 +1643,7 @@ def _one_pass(
 
     for tranche in structure:
         start = opening[tranche.name]
-        matured = tranche.has_matured(index)
+        matured = tranche.matured_at(period.index)
         if structure.interest_basis is InterestBasis.AVERAGE and not matured:
             accrual = (start + guess[tranche.name]) / half
         else:
@@ -1611,7 +1660,7 @@ def _one_pass(
 
         cash_interest[tranche.name] = tranche.rate_at(base) * year_fraction * accrual
         pik_interest[tranche.name] = tranche.pik_rate * year_fraction * accrual
-        undrawn = max(tranche.undrawn_at(accrual, index), ZERO)
+        undrawn = max(tranche.undrawn_at(accrual, period=period.index), ZERO)
         undrawn_fee[tranche.name] = tranche.undrawn_fee * year_fraction * undrawn
 
         owed = start + pik_interest[tranche.name]
@@ -1619,7 +1668,8 @@ def _one_pass(
             due = owed
         else:
             face = tranche.face if basis is None else basis[tranche.name]
-            due = min(tranche.scheduled_amortisation(index, face), owed)
+            instalment = tranche.scheduled_amortisation(driver_index, face)
+            due = min(instalment * amortisation_scale, owed)
         mandatory[tranche.name] = max(due, ZERO)
 
     cash_cost = sum(cash_interest.values(), ZERO) + sum(undrawn_fee.values(), ZERO)
@@ -1632,7 +1682,7 @@ def _one_pass(
         revolvers = [t for t in structure if t.is_revolving]
         capacity = [
             ZERO
-            if t.has_matured(index)
+            if t.matured_at(period.index)
             else max(
                 t.commitment - (opening[t.name] + pik_interest[t.name] - mandatory[t.name]),
                 ZERO,
@@ -1735,6 +1785,7 @@ def _solve_period(
     unlevered_free_cash_flow: Money,
     sweep_rate: Money,
     basis: dict[str, Money] | None = None,
+    amortisation_scale: Money = ONE,
     certified_leverage: Money | None = None,
 ) -> DebtPeriod:
     """Find the closing balances consistent with the interest they generate.
@@ -1767,6 +1818,7 @@ def _solve_period(
             guess=opening,
             sweep_rate=sweep_rate,
             basis=basis,
+            amortisation_scale=amortisation_scale,
             certified_leverage=certified_leverage,
         )
 
@@ -1784,6 +1836,7 @@ def _solve_period(
             guess=guess,
             sweep_rate=sweep_rate,
             basis=basis,
+            amortisation_scale=amortisation_scale,
             certified_leverage=certified_leverage,
         )
         produced = {row.name: row.closing for row in result.tranches}
