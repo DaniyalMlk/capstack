@@ -29,14 +29,20 @@ EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 
 
 def meridian(*, frequency: str = "annual", in_years: bool = True) -> dict[str, Any]:
-    """The shipped five-year deal, optionally with its maturities restated."""
+    """The shipped five-year deal, on a chosen grid.
+
+    The file states its maturities in years, which is the point of the change.
+    ``in_years=False`` rewrites them as bare period numbers, which is what the
+    file said before and what a file written against an annual grid still says.
+    """
     with (EXAMPLES / "meridian.json").open() as handle:
         deal: dict[str, Any] = json.load(handle)
     deal["projection"] = {**deal["projection"], "frequency": frequency}
-    if in_years:
+    if not in_years:
         for tranche in deal["debt"]:
-            if tranche.get("maturity") is not None:
-                tranche["maturity"] = f"{tranche['maturity']}y"
+            stated = tranche.get("maturity")
+            if isinstance(stated, str) and stated.endswith("y"):
+                tranche["maturity"] = int(stated[:-1])
     return deal
 
 

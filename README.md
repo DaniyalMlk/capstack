@@ -7,8 +7,10 @@ for, how the purchase is funded, what the operating case throws off, how the deb
 gets paid down, whether the covenants hold, and what the sponsor makes on the way
 out.
 
-Status: the engine is complete through phase seven, and phase eight — the
-things that happen between buying a business and selling it — is under way. What
+Status: the engine is complete through phase eight, and phase nine — making the
+quarterly and monthly grids as trustworthy as the annual one — is complete but
+for its last item, which is running the checks automatically rather than by
+hand. What
 is there: the numerics (exact money, day counts, period grids,
 the return measures), the transaction (entry valuation, a sources and uses table
 that balances, and the opening balance sheet after the recapitalisation), the
@@ -992,6 +994,38 @@ measuring a whole debt balance against a part-period figure would report
 leverage several turns worse than the deal carries and breach a covenant nobody
 has breached. The stub is recorded as untested with the reason on the row, and
 the leverage line shows nothing rather than a number.
+
+**A date is stated as a period or as a year, and a file says which.** An
+assumption is read by the year a period falls in, so an operating case already
+describes the same five years however often they are reported. Everything a file
+stated as a period number was still a column, and a column is a different date on
+every frequency: `maturity: 7` retired a term loan in year seven on an annual
+grid and in quarter seven on a quarterly one, a year and a half into a five-year
+hold, with nothing raised anywhere.
+
+Reinterpreting period numbers would have been the wrong fix. A period number is
+the right unit for something that genuinely happens in a particular quarter — an
+add-on that closes in the third one — and it is not supposed to survive a change
+of frequency. What was missing was the ability to say which of the two was meant.
+So a bare number is a period, as it always was, and a number suffixed with `y` is
+the end of that year, resolved against the grid: `"7y"` is period 7 on an annual
+grid and period 28 on a quarterly one, which are the same date. Maturities,
+availability periods, event dates and a covenant's first test period all read it.
+
+The same reasoning applies to how long an assumption series is. A ramp from 8.5%
+to 3.5% across a five-year case is five numbers however often the years are
+reported, so a series is expanded over the years of the projection rather than
+over its columns. Expanding it over columns and reading it by year — which is
+what happened when assumptions first became annual — tapered the business over a
+quarter of the intended span on a quarterly grid, and cost 2% of exit EBITDA
+without raising anything.
+
+Together with the two decisions above, this is what makes a file portable: the
+shipped Meridian deal run quarterly instead of annually prices its exit on the
+same earnings at the same multiple and lands within half a per cent on debt
+outstanding and two hundredths of a per cent on equity value. The residual is
+not error — a quarterly model accrues interest over shorter periods and sweeps
+four times a year, and genuinely deleverages a little differently.
 
 **A commitment is consumed by drawing on it, unless it revolves.** A revolver
 and a delayed-draw term loan look alike in a file — both are committed at close

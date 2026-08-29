@@ -320,7 +320,7 @@ class TestTheShippedExample:
         line = self.facility()
         assert line["face"] == 0.0
         assert line["commitment"] == 150.0
-        assert line["availability"] == 3
+        assert line["availability"] == "3y"
         assert line["undrawn_fee"] > 0
 
     def test_the_three_add_ons_fit_inside_it(self) -> None:
@@ -339,4 +339,5 @@ class TestTheShippedExample:
             for event in self.deal()["acquisitions"]
             if any(d["tranche"] == "Acquisition facility" for d in event["draws"])
         ]
-        assert max(drawing) <= self.facility()["availability"]
+        years = int(str(self.facility()["availability"]).rstrip("y"))
+        assert max(drawing) <= years
