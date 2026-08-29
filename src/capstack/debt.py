@@ -1426,7 +1426,14 @@ class DebtSchedule:
             # The trailing year at each date rather than the period, because a
             # sweep grid steps on leverage and leverage is a year of earnings.
             ebitda=[model.trailing_ebitda(i) for i in range(len(model))],
-            opening_ebitda=opening_ebitda,
+            # The level the deal was priced at, which is what the dates with no
+            # year behind them fall back to. It has to be a year as well: the
+            # first entry of the series is a trailing figure over a window that
+            # is not yet complete, and on a quarterly grid falling back to it
+            # would certify the opening structure at four times its leverage.
+            opening_ebitda=(
+                opening_ebitda if opening_ebitda is not None else model.entry_ebitda
+            ),
             recapitalisations=recapitalisations,
             acquisitions=acquisitions,
             refinancings=refinancings,
