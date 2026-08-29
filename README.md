@@ -9,9 +9,8 @@ out.
 
 Status: the engine is complete through phase eight, and phase nine — making the
 quarterly and monthly grids as trustworthy as the annual one — is complete but
-for its last item, which is running the checks automatically rather than by
-hand. What
-is there: the numerics (exact money, day counts, period grids,
+for its last item, which is running the checks on every push rather than by
+hand. What is there: the numerics (exact money, day counts, period grids,
 the return measures), the transaction (entry valuation, a sources and uses table
 that balances, and the opening balance sheet after the recapitalisation), the
 operating case (drivers through to unlevered free cash flow), the capital
