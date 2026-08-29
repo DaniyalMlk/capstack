@@ -22,7 +22,14 @@ from enum import Enum
 from .daycount import DayCount, year_fraction
 from .money import ONE, Money
 
-__all__ = ["Frequency", "Period", "PeriodGrid", "add_months", "end_of_month"]
+__all__ = [
+    "Frequency",
+    "Period",
+    "PeriodGrid",
+    "TrailingWindow",
+    "add_months",
+    "end_of_month",
+]
 
 
 class Frequency(Enum):
@@ -168,6 +175,38 @@ class Period:
 
 
 @dataclass(frozen=True, slots=True)
+class TrailingWindow:
+    """A run of consecutive periods covering an interval that ends on a date.
+
+    ``complete`` is the part that matters. A trailing-twelve-month figure taken
+    over nine months is not a conservative twelve-month figure, it is a
+    different measure, and a leverage ratio built on one reads a third too high.
+    Every consumer is expected to decide what to do about an incomplete window
+    rather than to average over the difference.
+    """
+
+    periods: tuple[Period, ...]
+    opens: date
+    closes: date
+    complete: bool
+
+    def __len__(self) -> int:
+        return len(self.periods)
+
+    def __iter__(self):  # type: ignore[no-untyped-def]
+        return iter(self.periods)
+
+    @property
+    def indices(self) -> tuple[int, ...]:
+        """The period numbers in the window, in order."""
+        return tuple(p.index for p in self.periods)
+
+    @property
+    def days(self) -> int:
+        return sum(p.days for p in self.periods)
+
+
+@dataclass(frozen=True, slots=True)
 class PeriodGrid:
     """An ordered, contiguous set of projection periods.
 
@@ -273,6 +312,38 @@ class PeriodGrid:
                 )
             )
         return cls(periods=tuple(periods), frequency=frequency)
+
+    def trailing(self, position: int, months: int = 12) -> TrailingWindow:
+        """The periods making up the ``months`` ending with period ``position``.
+
+        The unit a credit agreement measures in. Everything a covenant tests is
+        a flow — earnings, interest, contractual repayment — and a flow has to
+        be compared against a stock, the debt, over a stated interval. That
+        interval is a year, not a reporting period, which is the whole reason a
+        quarterly model cannot simply divide one column by another.
+
+        The window is defined by dates rather than by counting columns, so a
+        stub at the front is handled without a special case: the window covers
+        the twelve months back from this period's end, and a period is in it
+        when it lies wholly inside. A window is ``complete`` when those periods
+        cover the interval with nothing missing at the front — which they do
+        not, for the first three quarters of a quarterly grid, and which is the
+        distinction between a ratio worth reporting and one that is a fraction
+        of a year pretending to be a year.
+        """
+        if not -len(self.periods) <= position < len(self.periods):
+            raise IndexError(f"period {position} is outside the grid")
+        last = self.periods[position]
+        opens = add_months(last.end, -months)
+        inside = tuple(
+            p for p in self.periods if p.start >= opens and p.end <= last.end
+        )
+        # ``inside`` is contiguous and ends at ``last`` by construction, since
+        # the grid itself is contiguous. It is short only at the front.
+        complete = bool(inside) and inside[0].start == opens
+        return TrailingWindow(
+            periods=inside, opens=opens, closes=last.end, complete=complete
+        )
 
     @property
     def has_stub(self) -> bool:

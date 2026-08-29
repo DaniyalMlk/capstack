@@ -7,6 +7,15 @@ or margin building 150bp over five years as a cost programme lands.
 
 Writing those out by hand for every line is where transcription errors get into
 a model, so they are expressed once and expanded here.
+
+An assumption is annual. That is a statement about the file rather than about
+the grid: 8% growth means 8% over a year and 20% margin means 20% for the year,
+and the same file has to describe the same business whether the year is reported
+once or twelve times. Two things follow, and they are different for the two
+kinds of assumption. A *rate of change* has to be converted before it is applied
+more than once a year, which is what :func:`compounded_over` is for. A *level* —
+a margin, a capital-intensity ratio — is already a share of something that has
+itself been scaled to the period, so it is applied as written.
 """
 
 from __future__ import annotations
@@ -15,9 +24,41 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 
-from .money import Money, Numeric, money
+from .money import ONE, Money, Numeric, money
 
-__all__ = ["Driver"]
+__all__ = ["Driver", "compounded_over"]
+
+
+def compounded_over(annual: Money, share: Money) -> Money:
+    """The rate that compounds to ``annual`` over the whole of a year.
+
+    ``share`` is the fraction of a year the period covers. Applying 8% in each
+    of four quarters grows a business by 36% over the year, which is not what
+    the file said. The rate that belongs in a quarter is the one that compounds
+    to 8% across four of them — ``1.08 ** 0.25 - 1``, or about 1.943%.
+
+    A ``share`` of exactly one returns ``annual`` unchanged rather than routing
+    it through a power. The result would agree to thirty-four digits either way;
+    returning it untouched makes an annual grid identical rather than merely
+    indistinguishable, which is the property the existing worked examples are
+    checked against.
+
+    A rate at or below -100% has no real root above zero. -100% itself is
+    admitted, because a business that ends the year at nothing is at nothing
+    however the year is divided. Anything below it is rejected rather than
+    quietly turned into a positive number by an even root.
+    """
+    if share <= 0:
+        raise ValueError("a period covers a positive share of a year")
+    if share == ONE:
+        return annual
+    base = ONE + annual
+    if base < 0:
+        raise ValueError(
+            f"a rate of {annual} shrinks the base past nothing, so it has no "
+            f"equivalent over part of a year"
+        )
+    return base**share - ONE
 
 
 @dataclass(frozen=True, slots=True)
