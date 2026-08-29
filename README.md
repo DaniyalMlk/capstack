@@ -993,6 +993,38 @@ leverage several turns worse than the deal carries and breach a covenant nobody
 has breached. The stub is recorded as untested with the reason on the row, and
 the leverage line shows nothing rather than a number.
 
+**An assumption is annual, and a period is a share of a year.** The same deal
+file has to describe the same business whether the year is reported once or
+twelve times, and that single requirement settles four questions that look
+unrelated. An assumption series is read by the year a period falls in rather
+than by the column, so a five-year case is not exhausted in five quarters. A
+growth rate is converted before it is applied more than once a year — the rate
+that belongs in a quarter is the one that compounds to the annual figure across
+four of them, not the annual figure itself, which would grow a business 36% a
+year on an 8% assumption. A flow takes its period's share of the year rather
+than the whole of it. And contractual amortisation, written per year, is charged
+per year: 1% a year is 0.25% a quarter, on the same side of the model where
+interest already accrues on days.
+
+The year's revenue is settled first, at the annual rate, exactly as it is on an
+annual grid; the periods inside the year then divide that figure between them.
+Not evenly, because a business growing at 9% earns more in its fourth quarter
+than in its first — the shares ramp at the rate that compounds to the annual one
+and are normalised to sum to one. That buys both properties at once: the
+quarters slope, and they add back to the year exactly. Balance-sheet ratios are
+struck against the trailing twelve months rather than against a single period
+annualised, for the same reason a working-capital ratio is a stock over a year
+of sales.
+
+What follows is that revenue, EBITDA, capital expenditure, cash tax, free cash
+flow and the year-end working-capital balance agree year by year on annual,
+semi-annual, quarterly and monthly grids, and an annual model is arithmetically
+untouched. What does *not* carry across is anything a file states as a period
+number — a maturity, an add-on's closing period, a covenant's first test date.
+Those are period numbers by design, so `maturity: 7` is the seventh year on an
+annual grid and the seventh quarter on a quarterly one, and a file moved between
+frequencies has to restate them.
+
 ## Licence
 
 MIT
