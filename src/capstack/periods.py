@@ -20,7 +20,7 @@ from datetime import date
 from enum import Enum
 
 from .daycount import DayCount, year_fraction
-from .money import Money
+from .money import ONE, Money
 
 __all__ = ["Frequency", "Period", "PeriodGrid", "add_months", "end_of_month"]
 
@@ -71,17 +71,27 @@ class Period:
     ``index`` is 1-based: period 1 is the first full period after close, which
     matches how deal teams talk about the model. The stub before it, if any, is
     period 0.
+
+    ``periods_per_year`` is how the year this period belongs to is divided. A
+    period carries it rather than deriving it because a period is passed around
+    on its own — into a covenant test, into an interest accrual — and every one
+    of those callers needs to know what fraction of a year it is looking at.
+    The default of one keeps a period built by hand annual, which is what a
+    single period unattached to a grid has always meant.
     """
 
     index: int
     start: date
     end: date
+    periods_per_year: int = 1
 
     def __post_init__(self) -> None:
         if self.end < self.start:
             raise ValueError(f"period {self.index} ends ({self.end}) before it starts ({self.start})")
         if self.index < 0:
             raise ValueError("period index must not be negative")
+        if self.periods_per_year < 1:
+            raise ValueError("a year is divided into at least one period")
 
     @property
     def is_stub(self) -> bool:
@@ -92,16 +102,23 @@ class Period:
     def driver_index(self) -> int:
         """Where to read an assumption series for this period, zero-based.
 
+        An assumption is written by year. Revenue growth of 8% means 8% over a
+        year, and a margin of 20% is the margin for the year, whether the year
+        is reported once or twelve times — so every period of the same year
+        reads the same entry, and the index counts years rather than columns.
+        Reading by column instead would exhaust a five-year case in five
+        quarters and hold the terminal assumption for the remaining fifteen.
+
         A stub is not a year of its own. A deal closing in November trades six
         weeks of the year it closed in, at that year's margin and that year's
         capital intensity, and the first full period is still year one — so the
         stub and the period after it read the same assumptions.
 
-        Without a stub the mapping is the identity it always was: period 1 reads
-        index 0, period 2 reads index 1, and a grid built the old way is
+        On an annual grid the mapping is the identity it always was: period 1
+        reads index 0, period 2 reads index 1, and a grid built the old way is
         indistinguishable from one built today.
         """
-        return max(self.index - 1, 0)
+        return max(self.index - 1, 0) // self.periods_per_year
 
     @property
     def days(self) -> int:
@@ -110,6 +127,29 @@ class Period:
     def year_fraction(self, convention: DayCount = DayCount.ACT_365F) -> Money:
         """Length of this period as a fraction of a year."""
         return year_fraction(self.start, self.end, convention)
+
+    def share_of_year(self, convention: DayCount = DayCount.ACT_365F) -> Money:
+        """How much of a year's trading this period carries.
+
+        A whole period takes an equal share of its year — a quarter is a
+        quarter — rather than its own count of days over 365. The two differ,
+        and the equal share is the right one for an operating case: a budget is
+        a year's trading divided into reporting periods, so the periods of a
+        year have to add back to the year exactly. Measuring by days would make
+        four quarters sum to 366/365 of a leap year and would silently restate
+        every annual model that happens to span one.
+
+        Interest is the other way round and is accrued the other way round: it
+        is earned per day, so the debt schedule uses :meth:`year_fraction` with
+        whatever day count the credit agreement negotiated. The two conventions
+        sit side by side on purpose.
+
+        A stub is the exception, because it has no natural share to take. It
+        gets the fraction of a year its days actually cover.
+        """
+        if self.is_stub:
+            return self.year_fraction(convention)
+        return ONE / Money(self.periods_per_year)
 
     @property
     def label(self) -> str:
@@ -144,6 +184,14 @@ class PeriodGrid:
             raise ValueError("a grid needs at least one period")
         if any(p.is_stub for p in self.periods[1:]):
             raise ValueError("a stub is the first period or it is not a stub")
+        mismatched = [
+            p for p in self.periods if p.periods_per_year != self.frequency.periods_per_year
+        ]
+        if mismatched:
+            raise ValueError(
+                f"period {mismatched[0].index} divides its year into "
+                f"{mismatched[0].periods_per_year} but the grid is {self.frequency}"
+            )
         for earlier, later in zip(self.periods, self.periods[1:]):
             if later.start != earlier.end:
                 raise ValueError(
@@ -202,7 +250,14 @@ class PeriodGrid:
                     f"is longer than one {frequency}"
                 )
             if stub_to != add_months(close, step):
-                periods.append(Period(index=0, start=close, end=stub_to))
+                periods.append(
+                    Period(
+                        index=0,
+                        start=close,
+                        end=stub_to,
+                        periods_per_year=frequency.periods_per_year,
+                    )
+                )
             anchor = stub_to
 
         # The whole periods are numbered from one whether or not a stub sits in
@@ -214,6 +269,7 @@ class PeriodGrid:
                     index=i + 1,
                     start=add_months(anchor, i * step),
                     end=add_months(anchor, (i + 1) * step),
+                    periods_per_year=frequency.periods_per_year,
                 )
             )
         return cls(periods=tuple(periods), frequency=frequency)
