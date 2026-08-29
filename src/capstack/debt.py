@@ -1141,6 +1141,39 @@ def _acquisitions_by_period(
                     f"{event.period}, so there is nothing left to draw on it"
                 )
         scheduled[event.period] = event
+
+    # Capacity is consumed in date order and never comes back, so the events are
+    # walked in that order rather than checked one at a time. Two add-ons that
+    # each fit inside a facility can still overdraw it between them, and that is
+    # exactly the mistake a committed acquisition line exists to prevent.
+    #
+    # A tranche with no commitment is an uncommitted accordion: there is no
+    # capacity to check against, and drawing on one remains a statement about
+    # what a lender would agree to rather than something the file can verify.
+    remaining = {
+        t.name: t.commitment - t.face for t in structure if t.has_commitment
+    }
+    for period in sorted(scheduled):
+        event = scheduled[period]
+        for draw in event.draws:
+            facility = structure.tranche(draw.tranche)
+            if not facility.has_commitment:
+                continue
+            if not facility.available_at(period):
+                raise AddOnError(
+                    f"{event.label}: {draw.tranche} was available to draw until "
+                    f"period {facility.availability}, and this closes at the end "
+                    f"of period {period}"
+                )
+            left = remaining[draw.tranche]
+            if draw.amount > left:
+                raise AddOnError(
+                    f"{event.label}: draws {draw.amount} on {draw.tranche}, which "
+                    f"is committed at {facility.commitment} and has {left} of it "
+                    f"left; a facility is a limit rather than a description of "
+                    f"where the money comes from"
+                )
+            remaining[draw.tranche] = left - draw.amount
     return scheduled
 
 
