@@ -94,7 +94,16 @@ monthly ones, and two things stop them being trustworthy on a leveraged deal.
       than as a term loan with nothing drawn. A commitment is only legal on a
       revolver today, so a ticking fee cannot be charged on undrawn capacity and
       a draw cannot be checked against the capacity that exists
-- [ ] Continuous compounding of a driver across a sub-annual grid, so a growth
-      rate stated annually is not applied four times a year
+- [x] An annual assumption applied to a sub-annual grid. A growth rate stated
+      annually was applied once per period rather than compounded across the
+      year, a whole period booked a full year of trading rather than its share
+      of one, an assumption series was read by column rather than by year, and
+      contractual amortisation written per year was charged per period. The four
+      together made a quarterly grid a different and much better business than
+      the annual grid built from the same file
+- [ ] A file that means the same thing on any frequency. Maturities, add-on
+      closing periods and first test dates are stated as period numbers, so a
+      file moved from an annual grid to a quarterly one has to restate every one
+      of them or the paper matures a year and a half early
 - [ ] Automated checks on every push. The suite and the type checker are run by
       hand, which is enough for one pair of eyes and not enough for two
