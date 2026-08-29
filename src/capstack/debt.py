@@ -1591,20 +1591,29 @@ class DebtSchedule:
 def _amortisation_scale(
     periods: Sequence[Period], index: int, day_count: DayCount
 ) -> Money:
-    """How much of a whole period's instalment a period of this length owes.
+    """How much of a year's instalment a period of this length owes.
 
-    One for every period but a stub. A stub owes the fraction of a whole period
-    it actually covers, measured against the first whole period on the same grid
-    rather than against a nominal year — the grid is the only thing that knows
-    whether a period is a quarter or a month, and asking it costs nothing.
+    A credit agreement writes amortisation per year — 1% a year on a term loan —
+    so a quarter owes a quarter of it. Charging the whole annual instalment in
+    every period would repay 1% four times a year on a quarterly grid, and the
+    schedule would retire the paper four times as fast as it is written to
+    retire, on the side of the model where interest is already accrued on days.
+
+    A stub owes the fraction of a whole period it covers, and through it the
+    same share of the year. Measuring the first part against the first whole
+    period on the grid rather than against a nominal year is what lets a stub
+    sit in front of a quarterly grid without a second special case.
+
+    An annual grid is unchanged: one whole period a year owes the whole of it.
     """
     period = periods[index]
+    share = ONE / Money(period.periods_per_year)
     if not period.is_stub:
-        return ONE
+        return share
     whole = next((p for p in periods if not p.is_stub), None)
     if whole is None:
-        return ONE
-    return safe_div(
+        return share
+    return share * safe_div(
         period.year_fraction(day_count), whole.year_fraction(day_count), default=ONE
     )
 
