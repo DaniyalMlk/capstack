@@ -105,9 +105,11 @@ monthly ones, and two things stop them being trustworthy on a leveraged deal.
       contractual amortisation written per year was charged per period. The four
       together made a quarterly grid a different and much better business than
       the annual grid built from the same file
-- [ ] A file that means the same thing on any frequency. Maturities, add-on
-      closing periods and first test dates are stated as period numbers, so a
-      file moved from an annual grid to a quarterly one has to restate every one
-      of them or the paper matures a year and a half early
+- [x] A file that means the same thing on any frequency. Maturities, add-on
+      closing periods and first test dates were stated as period numbers, so a
+      file moved from an annual grid to a quarterly one had to restate every one
+      of them or the paper matured a year and a half early. A date can now be
+      stated in years and resolved against the grid, and an assumption series is
+      expanded over the years of the case rather than over its columns
 - [ ] Automated checks on every push. The suite and the type checker are run by
       hand, which is enough for one pair of eyes and not enough for two

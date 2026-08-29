@@ -51,6 +51,18 @@ class Frequency(Enum):
     def periods_per_year(self) -> int:
         return self.value
 
+    def period_ending_year(self, year: int) -> int:
+        """The period number whose end is the end of ``year``.
+
+        The translation a file needs in order to mean the same thing on any
+        frequency. A term loan maturing at the end of year seven matures in
+        period seven of an annual grid and period twenty-eight of a quarterly
+        one, and those are the same date — which is what a maturity is.
+        """
+        if year < 1:
+            raise ValueError("years are numbered from one")
+        return year * self.periods_per_year
+
     def __str__(self) -> str:
         return self.name.replace("_", "-").lower()
 
@@ -371,6 +383,22 @@ class PeriodGrid:
     def whole_periods(self) -> tuple[Period, ...]:
         """Every period but the stub."""
         return tuple(p for p in self.periods if not p.is_stub)
+
+    @property
+    def years(self) -> int:
+        """How many years of assumptions this grid reads.
+
+        The length an assumption series is expanded to, which is not the number
+        of columns. A five-year case written as a ramp from 8.5% to 3.5% is five
+        numbers however often the years are reported; expanding it to twenty on
+        a quarterly grid and then reading it by year would use the first five of
+        them and taper the business over a quarter of the intended span.
+
+        A stub is not a year of its own, so it does not add one.
+        """
+        whole = len(self.whole_periods)
+        step = self.frequency.periods_per_year
+        return max((whole + step - 1) // step, 1)
 
     @property
     def start(self) -> date:
