@@ -64,7 +64,7 @@ from .money import (
     safe_div,
 )
 from .operating import OperatingModel
-from .periods import Period
+from .periods import Period, trailing_window
 
 __all__ = [
     "AmortisationBasis",
@@ -1319,10 +1319,21 @@ class DebtSchedule:
                 # twelve months a compliance certificate is struck on — so the
                 # period after a stub falls back to the level the deal was
                 # priced at, exactly as the first period does.
+                # A date certifies only when a full year stands behind it, so
+                # the first three quarters of a quarterly grid fall back to the
+                # level the deal was priced at exactly as a stub does. Stepping
+                # a sweep on a part-year would pin the structure at its top rate
+                # for the whole of the first year on a leverage level that never
+                # existed.
                 previous = periods[i - 1] if i > 0 else None
+                certifies = (
+                    previous is not None
+                    and not previous.is_stub
+                    and trailing_window(periods, i - 1).complete
+                )
                 earnings = (
                     money(ebitda[i - 1])
-                    if previous is not None and not previous.is_stub
+                    if certifies
                     else money(opening_ebitda if opening_ebitda is not None else ebitda[0])
                 )
                 debt = sum(balances.values(), ZERO)
@@ -1412,8 +1423,17 @@ class DebtSchedule:
             [p.period for p in model],
             [p.unlevered_free_cash_flow for p in model],
             opening_cash=opening_cash,
-            ebitda=[p.ebitda for p in model],
-            opening_ebitda=opening_ebitda,
+            # The trailing year at each date rather than the period, because a
+            # sweep grid steps on leverage and leverage is a year of earnings.
+            ebitda=[model.trailing_ebitda(i) for i in range(len(model))],
+            # The level the deal was priced at, which is what the dates with no
+            # year behind them fall back to. It has to be a year as well: the
+            # first entry of the series is a trailing figure over a window that
+            # is not yet complete, and on a quarterly grid falling back to it
+            # would certify the opening structure at four times its leverage.
+            opening_ebitda=(
+                opening_ebitda if opening_ebitda is not None else model.entry_ebitda
+            ),
             recapitalisations=recapitalisations,
             acquisitions=acquisitions,
             refinancings=refinancings,

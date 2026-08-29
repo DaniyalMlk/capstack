@@ -86,10 +86,12 @@ the equity that only exist because somebody has to be paid to run the business.
 Everything above is exercised on annual grids. The engine builds quarterly and
 monthly ones, and two things stop them being trustworthy on a leveraged deal.
 
-- [ ] Leverage and coverage measured on a trailing twelve months rather than on
-      the period. On a quarterly grid the ratios divide a whole debt balance by
-      one quarter's earnings and read four times too high, which is not a
-      presentational problem but a covenant that breaches in every period
+- [x] Leverage and coverage measured on a trailing twelve months rather than on
+      the period. On a quarterly grid the ratios divided a whole debt balance by
+      one quarter's earnings and read four times too high, which was not a
+      presentational problem but a covenant that breached in every period. The
+      cash sweep stepped on the same figure and sat at its top rate for a whole
+      hold. A date with fewer than twelve months behind it does not certify
 - [ ] A delayed-draw or acquisition facility described as a commitment rather
       than as a term loan with nothing drawn. A commitment is only legal on a
       revolver today, so a ticking fee cannot be charged on undrawn capacity and

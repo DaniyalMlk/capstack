@@ -31,6 +31,21 @@ matters is whether the ratio is undefined because nothing is at risk — no debt
 to be levered, no interest to be covered — or because the denominator collapsed,
 which is the case a covenant exists to catch. The first passes, the second
 breaches, and neither reports a number.
+
+*Every ratio is measured over twelve months.* A covenant compares a stock
+against a flow, and a flow only means something over a stated interval. That
+interval is a year in every credit agreement, not a reporting period — so on a
+quarterly grid the debt is the balance on the test date and the earnings are the
+four quarters behind it. Dividing a whole debt balance by one quarter's earnings
+reports a structure at 5.2x as 20.8x and breaches every test in the file from the
+first certification. On an annual grid the trailing year *is* the period, and
+nothing about an existing model changes.
+
+A business that has not yet traded twelve months cannot certify. Nine months of
+earnings is not a conservative year, it is a different measure, and a ratio built
+on one reads a third too high. Those periods are reported untested with the
+reason on the row — which is what already happened to a stub, for the same
+reason.
 """
 
 from __future__ import annotations
@@ -43,15 +58,19 @@ from .debt import DebtPeriod, DebtSchedule
 from .drivers import Driver
 from .money import ZERO, Money, Numeric, money
 from .operating import OperatingModel, OperatingPeriod
-from .periods import Period
+from .periods import Period, TrailingWindow, trailing_window
 
 __all__ = [
+    "Certification",
     "Covenant",
     "CovenantObservation",
     "CovenantReport",
     "Direction",
     "Measure",
 ]
+
+#: The interval a maintenance covenant is measured over, in months.
+TEST_INTERVAL_MONTHS = 12
 
 
 class Direction(Enum):
@@ -111,6 +130,70 @@ NOTHING_AT_RISK = "no exposure to measure"
 
 #: What it is called when the denominator collapsed instead.
 DENOMINATOR_COLLAPSED = "the business earned nothing to measure against"
+
+#: What a period is called when the business has not traded a year yet.
+NO_YEAR_YET = "fewer than twelve months traded; nothing to certify against"
+
+
+@dataclass(frozen=True, slots=True)
+class Certification:
+    """Everything one test date is measured on, assembled over twelve months.
+
+    The stocks — debt, cash — are the balances standing on the test date, which
+    is what a balance is. The flows are summed over the year behind it, which is
+    what a flow needs to be compared against one. Keeping them in a single
+    object is what stops the two being mixed up at the point of division, which
+    is the whole of the defect this class exists to prevent.
+    """
+
+    window: TrailingWindow
+    debt: DebtPeriod
+    ebitda: Money
+    capital_expenditure: Money
+    cash_tax: Money
+    cash_cost_of_debt: Money
+    mandatory_repayment: Money
+
+    @property
+    def period(self) -> Period:
+        return self.debt.period
+
+    @property
+    def certifiable(self) -> bool:
+        """Whether a full year stands behind this date."""
+        return self.window.complete and not self.period.is_stub
+
+    @property
+    def interval(self) -> str:
+        """How the measurement would be described on a compliance certificate."""
+        if self.window.complete:
+            return f"twelve months to {self.window.closes.isoformat()}"
+        return f"{self.window.days} days to {self.window.closes.isoformat()}"
+
+    @classmethod
+    def assemble(
+        cls,
+        position: int,
+        schedule: DebtSchedule,
+        model: OperatingModel,
+        *,
+        months: int = TEST_INTERVAL_MONTHS,
+    ) -> Certification:
+        """Gather the twelve months ending with period ``position``."""
+        periods = [row.period for row in schedule]
+        window = trailing_window(periods, position, months)
+        inside = {p.index for p in window}
+        debt_rows = [row for row in schedule if row.period.index in inside]
+        case_rows = [row for row in model if row.period.index in inside]
+        return cls(
+            window=window,
+            debt=schedule[position],
+            ebitda=sum((r.ebitda for r in case_rows), ZERO),
+            capital_expenditure=sum((r.capital_expenditure for r in case_rows), ZERO),
+            cash_tax=sum((r.tax.cash_tax for r in case_rows), ZERO),
+            cash_cost_of_debt=sum((r.cash_cost_of_debt for r in debt_rows), ZERO),
+            mandatory_repayment=sum((r.mandatory_repayment for r in debt_rows), ZERO),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,10 +290,29 @@ class CovenantObservation:
     ebitda: Money
     ebitda_at_breach: Money | None
     note: str = ""
+    window: TrailingWindow | None = None
 
     @property
     def index(self) -> int:
         return int(self.period.index)
+
+    @property
+    def interval(self) -> str:
+        """The interval the flows were measured over, as a certificate says it.
+
+        Worth carrying on the row rather than leaving to the reader: on an
+        annual grid it restates the column heading, and on a quarterly one it is
+        the difference between a figure a lender would recognise and one four
+        times too large.
+        """
+        if self.window is None:
+            return f"period to {self.period.end.isoformat()}"
+        if self.window.complete:
+            return f"twelve months to {self.window.closes.isoformat()}"
+        # Said in days rather than rounded up to months, because the whole
+        # reason the row is untested is that the interval is not the one a
+        # certificate names, and describing it as a year would bury that.
+        return f"{self.window.days} days to {self.window.closes.isoformat()}"
 
     @property
     def breached(self) -> bool:
@@ -260,12 +362,27 @@ def _measured_debt(
 def _observe(
     covenant: Covenant,
     index: int,
-    debt: DebtPeriod,
-    operating: OperatingPeriod,
+    certification: Certification,
 ) -> CovenantObservation:
-    """Test one covenant in one period."""
+    """Test one covenant on one test date, over the year behind it."""
     threshold = covenant.threshold_at(index)
-    ebitda = operating.ebitda
+    debt = certification.debt
+    ebitda = certification.ebitda
+
+    def untested(note: str) -> CovenantObservation:
+        return CovenantObservation(
+            covenant=covenant.name,
+            measure=covenant.measure,
+            period=debt.period,
+            tested=False,
+            threshold=threshold,
+            actual=None,
+            passes=True,
+            ebitda=ebitda,
+            ebitda_at_breach=None,
+            note=note,
+            window=certification.window,
+        )
 
     # A stub is not a test date. A maintenance covenant is certified on a
     # reporting date against the last twelve months' earnings, and a business
@@ -273,32 +390,16 @@ def _observe(
     # against a part-period figure would report leverage several turns worse
     # than the deal carries and breach a covenant nobody has breached.
     if debt.period.is_stub:
-        return CovenantObservation(
-            covenant=covenant.name,
-            measure=covenant.measure,
-            period=debt.period,
-            tested=False,
-            threshold=threshold,
-            actual=None,
-            passes=True,
-            ebitda=ebitda,
-            ebitda_at_breach=None,
-            note="stub period; no twelve months to certify against",
-        )
+        return untested("stub period; no twelve months to certify against")
+
+    # The same objection, and it outlasts the stub. On a quarterly grid the
+    # first three certification dates have three, six and nine months behind
+    # them, and none of those is a year.
+    if not certification.certifiable:
+        return untested(NO_YEAR_YET)
 
     if not covenant.tests(index):
-        return CovenantObservation(
-            covenant=covenant.name,
-            measure=covenant.measure,
-            period=debt.period,
-            tested=False,
-            threshold=threshold,
-            actual=None,
-            passes=True,
-            ebitda=ebitda,
-            ebitda_at_breach=None,
-            note="not yet tested",
-        )
+        return untested("not yet tested")
 
     if covenant.measure.is_leverage:
         numerator = _measured_debt(covenant, debt)
@@ -319,6 +420,7 @@ def _observe(
                 passes=covenant.satisfied_by(actual, threshold),
                 ebitda=ebitda,
                 ebitda_at_breach=at_breach,
+                window=certification.window,
             )
         passes = numerator <= 0
         return CovenantObservation(
@@ -332,16 +434,22 @@ def _observe(
             ebitda=ebitda,
             ebitda_at_breach=None,
             note=NOTHING_AT_RISK if passes else DENOMINATOR_COLLAPSED,
+            window=certification.window,
         )
 
+    # Both sides of a coverage test are flows, so both are taken over the same
+    # twelve months. Measuring a period of earnings against a period of charges
+    # would land near the right answer by accident on a regular grid and nowhere
+    # near it on a grid with a stub, or in a year holding a refinancing.
     if covenant.measure is Measure.INTEREST_COVERAGE:
-        charges = debt.cash_cost_of_debt
+        charges = certification.cash_cost_of_debt
         earnings = ebitda
         floor = ZERO
     else:
-        charges = debt.cash_cost_of_debt + debt.mandatory_repayment
-        earnings = ebitda - operating.capital_expenditure - operating.tax.cash_tax
-        floor = operating.capital_expenditure + operating.tax.cash_tax
+        charges = certification.cash_cost_of_debt + certification.mandatory_repayment
+        unavoidable = certification.capital_expenditure + certification.cash_tax
+        earnings = ebitda - unavoidable
+        floor = unavoidable
 
     if charges <= 0:
         # Nothing to cover. A business with no cash debt service cannot fail a
@@ -358,6 +466,7 @@ def _observe(
             ebitda=ebitda,
             ebitda_at_breach=None,
             note=NOTHING_AT_RISK,
+            window=certification.window,
         )
 
     actual = earnings / charges
@@ -371,6 +480,7 @@ def _observe(
         passes=covenant.satisfied_by(actual, threshold),
         ebitda=ebitda,
         ebitda_at_breach=threshold * charges + floor,
+        window=certification.window,
     )
 
 
@@ -416,8 +526,14 @@ class CovenantReport:
 
         # Ordered by period and then by covenant, because the page is read down
         # a column: every test for one period before the next period's.
+        # Assembled once per test date rather than once per covenant: gathering
+        # a year of flows is the expensive half, and every covenant certified on
+        # the same date is measured on the same year of them.
+        certifications = [
+            Certification.assemble(i, schedule, model) for i in range(len(schedule))
+        ]
         observations = tuple(
-            _observe(covenant, schedule[i].period.driver_index, schedule[i], model[i])
+            _observe(covenant, schedule[i].period.driver_index, certifications[i])
             for i in range(len(schedule))
             for covenant in covenants
         )

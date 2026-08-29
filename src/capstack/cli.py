@@ -692,6 +692,11 @@ def _observation(o: CovenantObservation) -> dict[str, Any]:
         "ebitda_cushion": (
             None if o.ebitda_cushion is None else float(o.ebitda_cushion)
         ),
+        # The interval the flows were measured over. On an annual grid it
+        # restates the column heading; on a quarterly one it is the difference
+        # between a ratio a lender would recognise and one four times too large,
+        # so it is emitted rather than left to be inferred.
+        "measured_over": o.interval,
         "note": o.note,
     }
 
@@ -709,6 +714,11 @@ def _print_covenants(report: dict[str, Any]) -> None:
     header = f"{report['name']} - covenants"
     print(header)
     print("=" * len(header))
+    print()
+    # Stated once rather than on every row. A reader who does not know what
+    # interval a ratio was struck over cannot check it against a certificate,
+    # and on a sub-annual grid the interval is not the column.
+    print("  Ratios are measured over the twelve months to each date.")
     print()
 
     observations = report["observations"]
