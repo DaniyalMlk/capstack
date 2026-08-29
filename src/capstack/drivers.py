@@ -26,7 +26,7 @@ from decimal import Decimal
 
 from .money import ONE, Money, Numeric, money
 
-__all__ = ["Driver", "compounded_over"]
+__all__ = ["Driver", "compounded_over", "within_year_weights"]
 
 
 def compounded_over(annual: Money, share: Money) -> Money:
@@ -59,6 +59,46 @@ def compounded_over(annual: Money, share: Money) -> Money:
             f"equivalent over part of a year"
         )
     return base**share - ONE
+
+
+def within_year_weights(annual: Money, periods_per_year: int) -> tuple[Money, ...]:
+    """How a year's trading divides between the periods that report it.
+
+    A year's revenue is settled before this is asked: the annual line grows at
+    the annual rate, once, exactly as it does on an annual grid. What is left is
+    the question of where inside the year it was earned, and the answer cannot
+    be an equal split, because a business growing at 9% earns more in its fourth
+    quarter than in its first.
+
+    So the shares ramp at the rate that compounds to the annual one, and are
+    then normalised to sum to one. That gives both of the properties wanted at
+    once: the quarters of a year add back to the year exactly, so a file run
+    quarterly underwrites the same case it underwrote annually, and the quarters
+    still slope, so a covenant tested in the first quarter is tested against a
+    first quarter rather than against an average.
+
+    One period a year is the degenerate case and returns a single weight of one,
+    which keeps an annual grid untouched.
+    """
+    if periods_per_year < 1:
+        raise ValueError("a year is divided into at least one period")
+    if periods_per_year == 1:
+        return (ONE,)
+    step = ONE + compounded_over(annual, ONE / Decimal(periods_per_year))
+    if step <= 0:
+        # Only reachable at exactly -100% a year, where the business is at
+        # nothing from the first period on. All of the year's trading is in it.
+        return tuple(
+            ONE if k == 0 else Decimal(0) for k in range(periods_per_year)
+        )
+    shares = tuple(step**k for k in range(periods_per_year))
+    total = sum(shares, Decimal(0))
+    weights = [s / total for s in shares[:-1]]
+    # The last share is the residual rather than its own quotient, so the
+    # weights sum to exactly one and a year divided into twelve reassembles into
+    # the same year rather than into one a rounding unit away from it.
+    weights.append(ONE - sum(weights, Decimal(0)))
+    return tuple(weights)
 
 
 @dataclass(frozen=True, slots=True)

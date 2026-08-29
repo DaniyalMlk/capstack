@@ -15,6 +15,7 @@ compounding. A schedule anchored on 31 January runs 31 Jan, 28 Feb, 31 Mar, not
 from __future__ import annotations
 
 import calendar
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from enum import Enum
@@ -28,6 +29,7 @@ __all__ = [
     "PeriodGrid",
     "TrailingWindow",
     "add_months",
+    "trailing_window",
     "end_of_month",
 ]
 
@@ -206,6 +208,45 @@ class TrailingWindow:
         return sum(p.days for p in self.periods)
 
 
+def trailing_window(
+    periods: Sequence[Period], position: int, months: int = 12
+) -> TrailingWindow:
+    """The periods making up the ``months`` ending with ``periods[position]``.
+
+    The unit a credit agreement measures in. Everything a covenant tests is a
+    flow — earnings, interest, contractual repayment — and a flow has to be
+    compared against a stock, the debt, over a stated interval. That interval is
+    a year, not a reporting period, which is the whole reason a quarterly model
+    cannot simply divide one column by another.
+
+    The window is defined by dates rather than by counting columns, so a stub at
+    the front needs no special case: it covers the twelve months back from this
+    period's end, and a period is in it when it lies wholly inside. A window is
+    ``complete`` when those periods cover the interval with nothing missing at
+    the front — which they do not, for the first three quarters of a quarterly
+    grid, and which is the distinction between a ratio worth reporting and a
+    fraction of a year pretending to be a year.
+
+    Taking a sequence rather than a grid is deliberate: the same window is
+    wanted over an operating case and over a debt schedule, and neither of them
+    is a grid.
+    """
+    if not periods:
+        raise ValueError("a window needs at least one period")
+    if not -len(periods) <= position < len(periods):
+        raise IndexError(f"period {position} is outside the {len(periods)} given")
+    last = periods[position]
+    opens = add_months(last.end, -months)
+    inside = tuple(p for p in periods if p.start >= opens and p.end <= last.end)
+    # ``inside`` is contiguous and ends at ``last`` whenever the periods handed
+    # in are themselves contiguous, which a grid guarantees. It is short only at
+    # the front, so completeness is a question about its first period alone.
+    complete = bool(inside) and inside[0].start == opens
+    return TrailingWindow(
+        periods=inside, opens=opens, closes=last.end, complete=complete
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class PeriodGrid:
     """An ordered, contiguous set of projection periods.
@@ -314,36 +355,8 @@ class PeriodGrid:
         return cls(periods=tuple(periods), frequency=frequency)
 
     def trailing(self, position: int, months: int = 12) -> TrailingWindow:
-        """The periods making up the ``months`` ending with period ``position``.
-
-        The unit a credit agreement measures in. Everything a covenant tests is
-        a flow — earnings, interest, contractual repayment — and a flow has to
-        be compared against a stock, the debt, over a stated interval. That
-        interval is a year, not a reporting period, which is the whole reason a
-        quarterly model cannot simply divide one column by another.
-
-        The window is defined by dates rather than by counting columns, so a
-        stub at the front is handled without a special case: the window covers
-        the twelve months back from this period's end, and a period is in it
-        when it lies wholly inside. A window is ``complete`` when those periods
-        cover the interval with nothing missing at the front — which they do
-        not, for the first three quarters of a quarterly grid, and which is the
-        distinction between a ratio worth reporting and one that is a fraction
-        of a year pretending to be a year.
-        """
-        if not -len(self.periods) <= position < len(self.periods):
-            raise IndexError(f"period {position} is outside the grid")
-        last = self.periods[position]
-        opens = add_months(last.end, -months)
-        inside = tuple(
-            p for p in self.periods if p.start >= opens and p.end <= last.end
-        )
-        # ``inside`` is contiguous and ends at ``last`` by construction, since
-        # the grid itself is contiguous. It is short only at the front.
-        complete = bool(inside) and inside[0].start == opens
-        return TrailingWindow(
-            periods=inside, opens=opens, closes=last.end, complete=complete
-        )
+        """The periods making up the ``months`` ending with period ``position``."""
+        return trailing_window(self.periods, position, months)
 
     @property
     def has_stub(self) -> bool:
