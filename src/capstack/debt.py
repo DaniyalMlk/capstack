@@ -181,6 +181,7 @@ class Tranche:
     swept: bool = False
     commitment: Money = ZERO
     undrawn_fee: Money = ZERO
+    availability: int | None = None
     maturity: int | None = None
 
     @classmethod
@@ -199,6 +200,7 @@ class Tranche:
         swept: bool | None = None,
         commitment: Numeric | None = None,
         undrawn_fee: Numeric = 0,
+        availability: int | None = None,
         maturity: int | None = None,
     ) -> Tranche:
         """Build a tranche, taking the conventions of its kind where not told otherwise."""
@@ -218,6 +220,7 @@ class Tranche:
                 else money(commitment or 0)
             ),
             undrawn_fee=money(undrawn_fee),
+            availability=availability,
             maturity=maturity,
         )
 
@@ -234,23 +237,39 @@ class Tranche:
             raise ValueError(f"{self.name}: the base-rate floor must not be negative")
         if self.undrawn_fee < 0:
             raise ValueError(f"{self.name}: the commitment fee must not be negative")
-        if self.undrawn_fee and not self.is_revolving:
+        if self.undrawn_fee and not self.commitment:
             raise ValueError(
-                f"{self.name}: a commitment fee is charged on undrawn capacity, and only "
-                f"a revolving facility has any"
+                f"{self.name}: a fee on undrawn capacity needs a commitment to be "
+                f"undrawn against"
             )
         if self.seniority < 0:
             raise ValueError(f"{self.name}: seniority must not be negative")
         if self.commitment < 0:
             raise ValueError(f"{self.name}: the commitment must not be negative")
-        if self.is_revolving and self.face > self.commitment:
+        if self.commitment and self.face > self.commitment:
             raise ValueError(
                 f"{self.name}: drawn at close ({self.face}) exceeds the commitment "
                 f"({self.commitment})"
             )
-        if not self.is_revolving and self.commitment:
+        if self.commitment and not self.is_revolving and self.availability is None:
             raise ValueError(
-                f"{self.name}: only a revolving facility has an undrawn commitment"
+                f"{self.name}: a term commitment states how long it can be drawn. "
+                f"A revolver is available until it matures, but a delayed-draw or "
+                f"acquisition facility has an availability period, and without one "
+                f"there is nothing to stop the ticking fee running to maturity"
+            )
+        if self.availability is not None and self.availability < 1:
+            raise ValueError(
+                f"{self.name}: availability is a period index, so 1 or later"
+            )
+        if (
+            self.availability is not None
+            and self.maturity is not None
+            and self.availability > self.maturity
+        ):
+            raise ValueError(
+                f"{self.name}: available to draw in period {self.availability}, which "
+                f"is after it matures in period {self.maturity}"
             )
         if self.maturity is not None and self.maturity < 1:
             raise ValueError(f"{self.name}: maturity is a period index, so 1 or later")
@@ -317,18 +336,42 @@ class Tranche:
         """
         return self.maturity is not None and period >= self.maturity
 
-    def undrawn_at(self, drawn: Money, index: int = 0, *, period: int | None = None) -> Money:
-        """Commitment not currently drawn. Zero for anything but a revolver.
+    @property
+    def has_commitment(self) -> bool:
+        """Whether anything can be drawn on this name after close."""
+        return self.commitment > 0
 
-        A matured facility has no commitment left. Repaying it does not make it
-        available again, which is what a model that keeps its commitment alive
-        past maturity will happily do — repay the balance in full and redraw it
-        in the same period, forever.
+    def available_at(self, period: int) -> bool:
+        """Whether the facility can still be drawn in the period numbered ``period``.
+
+        A revolver is available until it matures. A term commitment — a
+        delayed-draw facility, a committed acquisition line — is available for a
+        stated period and then lapses, drawn or not, which is the difference
+        between the two instruments and the reason the availability period is
+        required on one and optional on the other.
         """
-        matured = (
-            self.has_matured(index) if period is None else self.matured_at(period)
-        )
-        if not self.is_revolving or matured:
+        if self.matured_at(period):
+            return False
+        return self.availability is None or period <= self.availability
+
+    def undrawn_at(self, drawn: Money, index: int = 0, *, period: int | None = None) -> Money:
+        """Commitment not yet available to the borrower, given what is ``drawn``.
+
+        What ``drawn`` means differs by instrument, and the difference is the
+        whole distinction between the two. On a revolver it is the balance
+        outstanding: repay it and the capacity comes back, which is what
+        revolving means. On a term commitment it is the cumulative face taken
+        down since close, because repaying a delayed-draw term loan does not
+        entitle anyone to draw it again. The caller passes the right one; a
+        model that passed the balance for both would let a borrower draw an
+        acquisition facility, repay it out of cash flow, and draw it again.
+
+        A matured facility has no commitment left, and neither has one whose
+        availability period has run — which is what stops a ticking fee being
+        charged for the rest of a hold on capacity nobody can take down.
+        """
+        at = index + 1 if period is None else period
+        if not self.has_commitment or not self.available_at(at):
             return ZERO
         return self.commitment - drawn
 
@@ -359,10 +402,11 @@ class AmortisationBasis:
     instalment for a period is struck on the basis that period opened on.
     """
 
-    __slots__ = ("_basis",)
+    __slots__ = ("_basis", "_retired")
 
     def __init__(self, structure: CapitalStructure) -> None:
         self._basis: dict[str, Money] = {t.name: t.face for t in structure}
+        self._retired: set[str] = set()
 
     def at(self, name: str) -> Money:
         """The face period instalments are currently measured against."""
@@ -389,8 +433,19 @@ class AmortisationBasis:
         Zero rather than reduced by the balance repaid: a refinancing retires
         the facility, not a slice of it, and what remains of the original face
         is a claim the replacement paper now carries on its own terms.
+
+        The name is remembered as well as zeroed. A basis of zero is otherwise
+        indistinguishable from a committed facility nobody has drawn yet, and
+        the two want opposite treatment: the undrawn one still ticks, and the
+        retired one has no commitment left to tick on.
         """
         self._basis[name] = ZERO
+        self._retired.add(name)
+
+    @property
+    def retired(self) -> frozenset[str]:
+        """The facilities taken out, which can no longer be drawn."""
+        return frozenset(self._retired)
 
     def apply(self, row: DebtPeriod) -> None:
         """Carry the basis across a solved period's events, in the order they ran."""
@@ -1353,6 +1408,7 @@ class DebtSchedule:
                 unlevered_free_cash_flow=money(unlevered_cash_flows[i]),
                 sweep_rate=rate,
                 basis=basis.snapshot(),
+                unavailable=basis.retired,
                 amortisation_scale=_amortisation_scale(periods, i, structure.day_count),
                 certified_leverage=certified,
             )
@@ -1649,6 +1705,7 @@ def _one_pass(
     guess: dict[str, Money],
     sweep_rate: Money,
     basis: dict[str, Money] | None = None,
+    unavailable: frozenset[str] = frozenset(),
     amortisation_scale: Money = ONE,
     certified_leverage: Money | None = None,
 ) -> DebtPeriod:
@@ -1694,7 +1751,23 @@ def _one_pass(
 
         cash_interest[tranche.name] = tranche.rate_at(base) * year_fraction * accrual
         pik_interest[tranche.name] = tranche.pik_rate * year_fraction * accrual
-        undrawn = max(tranche.undrawn_at(accrual, period=period.index), ZERO)
+        # A revolver's spare capacity is measured against the balance
+        # outstanding, because repaying it restores the capacity. A term
+        # commitment is measured against the face taken down since close, which
+        # is what the amortisation basis has been carrying all along — repaying
+        # a delayed-draw loan does not entitle anyone to draw it again, and
+        # charging its ticking fee on a falling balance would bill the borrower
+        # more for the facility the more of it they repaid.
+        if tranche.is_revolving:
+            taken = accrual
+        elif basis is not None:
+            taken = basis[tranche.name]
+        else:
+            taken = tranche.face
+        if tranche.name in unavailable:
+            undrawn = ZERO
+        else:
+            undrawn = max(tranche.undrawn_at(taken, period=period.index), ZERO)
         undrawn_fee[tranche.name] = tranche.undrawn_fee * year_fraction * undrawn
 
         owed = start + pik_interest[tranche.name]
@@ -1819,6 +1892,7 @@ def _solve_period(
     unlevered_free_cash_flow: Money,
     sweep_rate: Money,
     basis: dict[str, Money] | None = None,
+    unavailable: frozenset[str] = frozenset(),
     amortisation_scale: Money = ONE,
     certified_leverage: Money | None = None,
 ) -> DebtPeriod:
@@ -1852,6 +1926,7 @@ def _solve_period(
             guess=opening,
             sweep_rate=sweep_rate,
             basis=basis,
+            unavailable=unavailable,
             amortisation_scale=amortisation_scale,
             certified_leverage=certified_leverage,
         )
@@ -1870,6 +1945,7 @@ def _solve_period(
             guess=guess,
             sweep_rate=sweep_rate,
             basis=basis,
+            unavailable=unavailable,
             amortisation_scale=amortisation_scale,
             certified_leverage=certified_leverage,
         )

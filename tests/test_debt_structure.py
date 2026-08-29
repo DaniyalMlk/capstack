@@ -109,16 +109,23 @@ class TestTranche:
     def test_undrawn_capacity(self) -> None:
         assert revolver(face=25, commitment=100).undrawn_at(money(25)) == money(75)
 
-    def test_a_term_loan_has_no_undrawn_capacity(self) -> None:
+    def test_a_term_loan_with_no_commitment_has_no_undrawn_capacity(self) -> None:
         assert term_loan().undrawn_at(money(500)) == money(0)
 
     def test_drawing_more_than_the_commitment_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="exceeds the commitment"):
             Tranche.of("RCF", TrancheKind.REVOLVER, 120, commitment=100)
 
-    def test_only_a_revolver_carries_a_commitment(self) -> None:
-        with pytest.raises(ValueError, match="only a revolving facility"):
+    def test_a_term_commitment_has_to_say_how_long_it_is_available(self) -> None:
+        with pytest.raises(ValueError, match="how long it can be drawn"):
             Tranche.of("TLB", TrancheKind.TERM_LOAN, 100, commitment=200)
+
+    def test_a_term_commitment_that_says_so_is_accepted(self) -> None:
+        facility = Tranche.of(
+            "TLB", TrancheKind.TERM_LOAN, 100, commitment=200, availability=2
+        )
+        assert facility.has_commitment
+        assert facility.undrawn_at(money(100), period=1) == money(100)
 
     def test_a_nameless_tranche_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="needs a name"):
