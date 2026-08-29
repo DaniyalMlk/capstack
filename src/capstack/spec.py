@@ -639,6 +639,41 @@ def _whole(data: dict[str, Any], key: str, where: str) -> int | None:
         raise DealSpecError(f"{where}.{key}: not a whole number: {value!r}") from exc
 
 
+def _when(
+    data: dict[str, Any], key: str, where: str, frequency: Frequency
+) -> int | None:
+    """A period number, stated either as a column or as a year.
+
+    A bare number is a period, which is what it has always been and the right
+    unit for something that genuinely happens in a particular quarter — an
+    add-on that closes in the third one. It does not survive a change of
+    frequency, and it is not supposed to: period three is period three.
+
+    A number suffixed with ``y`` is the end of that year, resolved against the
+    grid. ``"7y"`` is period 7 on an annual grid and period 28 on a quarterly
+    one, which are the same date. That is what a maturity means, and stating it
+    as a bare 7 is how a file switched to quarterly retires its term loan a year
+    and a half into a five-year hold with nothing raised.
+    """
+    value = data.get(key)
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text.endswith("y"):
+            try:
+                year = int(text[:-1])
+            except ValueError as exc:
+                raise DealSpecError(
+                    f"{where}.{key}: not a number of years: {value!r}"
+                ) from exc
+            try:
+                return frequency.period_ending_year(year)
+            except ValueError as exc:
+                raise DealSpecError(f"{where}.{key}: {exc}") from exc
+    return _whole(data, key, where)
+
+
 def _tranche(data: Any, index: int) -> DebtFunding:
     """The funding view of a tranche: what it raises and what it costs to raise."""
     where = f"debt[{index}]"
@@ -652,7 +687,9 @@ def _tranche(data: Any, index: int) -> DebtFunding:
     )
 
 
-def _schedule_tranche(data: Any, index: int, periods: int) -> Tranche:
+def _schedule_tranche(
+    data: Any, index: int, periods: int, frequency: Frequency
+) -> Tranche:
     """The schedule view of the same tranche: what it costs to carry.
 
     Deliberately the same object in the file. A structure described twice is a
@@ -697,8 +734,8 @@ def _schedule_tranche(data: Any, index: int, periods: int) -> Tranche:
             swept=_flag(data, "swept", where),
             commitment=commitment,
             undrawn_fee=_optional_amount(data, "undrawn_fee", where),
-            availability=_whole(data, "availability", where),
-            maturity=_whole(data, "maturity", where),
+            availability=_when(data, "availability", where, frequency),
+            maturity=_when(data, "maturity", where, frequency),
         )
     except ValueError as exc:
         raise DealSpecError(f"{where}: {exc}") from exc
@@ -864,7 +901,9 @@ def _parse_draw(data: Any, index: int, where: str, *, key: str = "draws") -> Dra
         raise DealSpecError(f"{at}: {exc}") from exc
 
 
-def _parse_recapitalisation(data: Any, index: int) -> Recapitalisation:
+def _parse_recapitalisation(
+    data: Any, index: int, frequency: Frequency
+) -> Recapitalisation:
     """Read one mid-hold raise, and what it pays out."""
     where = f"recapitalisations[{index}]"
     if not isinstance(data, dict):
@@ -874,7 +913,7 @@ def _parse_recapitalisation(data: Any, index: int) -> Recapitalisation:
     if not isinstance(draws_raw, list):
         raise DealSpecError(f"{where}.draws: expected a list of take-downs")
 
-    period_raw = _whole(data, "period", where)
+    period_raw = _when(data, "period", where, frequency)
     if period_raw is None:
         raise DealSpecError(
             f"{where}: say which period this lands at the end of, numbered from one"
@@ -893,7 +932,9 @@ def _parse_recapitalisation(data: Any, index: int) -> Recapitalisation:
         raise DealSpecError(f"{where}: {exc}") from exc
 
 
-def _parse_acquisition(data: Any, index: int, periods: int) -> AddOn:
+def _parse_acquisition(
+    data: Any, index: int, periods: int, frequency: Frequency
+) -> AddOn:
     """Read one business bought during the hold.
 
     ``revenue`` is optional and its absence is meaningful rather than lazy: a
@@ -944,7 +985,9 @@ def _parse_acquisition(data: Any, index: int, periods: int) -> AddOn:
         raise DealSpecError(f"{where}: {exc}") from exc
 
 
-def _parse_refinancing(data: Any, index: int) -> Refinancing:
+def _parse_refinancing(
+    data: Any, index: int, frequency: Frequency
+) -> Refinancing:
     """Read one takeout: the facility retired, and the paper that replaces it.
 
     ``unamortised_fees`` may be stated or left out. Left out, it is derived
@@ -1160,7 +1203,9 @@ def _parse_sweep_grid(data: Any, where: str) -> SweepGrid:
         raise DealSpecError(f"{where}: {exc}") from exc
 
 
-def _parse_covenant(data: Any, index: int, periods: int) -> Covenant:
+def _parse_covenant(
+    data: Any, index: int, periods: int, frequency: Frequency
+) -> Covenant:
     """Read one maintenance test."""
     where = f"covenants[{index}]"
     if not isinstance(data, dict):
@@ -1182,7 +1227,7 @@ def _parse_covenant(data: Any, index: int, periods: int) -> Covenant:
             str(_require(data, "name", where)),
             _MEASURES[measure_name],
             _driver(_require(data, "threshold", where), periods, f"{where}.threshold"),
-            first_test_period=_whole(data, "first_test_period", where) or 1,
+            first_test_period=_when(data, "first_test_period", where, frequency) or 1,
             tranches=[str(t) for t in tranches_raw],
         )
     except ValueError as exc:
@@ -1383,8 +1428,13 @@ def parse_deal(data: dict[str, Any]) -> Deal:
             raise DealSpecError("operating: expected an object")
         grid = _parse_projection(projection_raw, close)
         assumptions, opening_revenue, opening_nwc = _parse_operating(
-            operating_raw, len(grid)
+            operating_raw, grid.years
         )
+
+    # How the grid divides its years, which is what turns a date stated in years
+    # into a period number. Without a projection there is nothing to resolve
+    # against, and annual is the reading a bare period number already had.
+    frequency = grid.frequency if grid is not None else Frequency.ANNUAL
 
     book: TargetBookBalanceSheet | None = None
     accounting: PurchaseAccounting | None = None
@@ -1398,11 +1448,15 @@ def parse_deal(data: dict[str, Any]) -> Deal:
             raise DealSpecError(
                 "structure: there are no tranches to schedule; describe them under 'debt'"
             )
-        # Amortisation and base-rate series are read against the projection, so
-        # the grid has to be known first. Without one they collapse to a single
-        # period, which is enough to validate the structure but not to run it.
-        span = len(grid) if grid is not None else 1
-        tranches = tuple(_schedule_tranche(item, i, span) for i, item in enumerate(debt_raw))
+        # Amortisation and base-rate series are read by year, so the grid has
+        # to be known first — and it is the count of years that matters rather
+        # than the count of columns. Without a grid they collapse to a single
+        # year, which is enough to validate the structure but not to run it.
+        span = grid.years if grid is not None else 1
+        tranches = tuple(
+            _schedule_tranche(item, i, span, frequency)
+            for i, item in enumerate(debt_raw)
+        )
         structure, opening_cash = _parse_structure(data["structure"], tranches, span)
 
     covenants: tuple[Covenant, ...] = ()
@@ -1421,7 +1475,8 @@ def parse_deal(data: dict[str, Any]) -> Deal:
                 "case, so a projection is required"
             )
         covenants = tuple(
-            _parse_covenant(item, i, len(grid)) for i, item in enumerate(covenants_raw)
+            _parse_covenant(item, i, grid.years, frequency)
+            for i, item in enumerate(covenants_raw)
         )
 
     recapitalisations: tuple[Recapitalisation, ...] = ()
@@ -1440,7 +1495,8 @@ def parse_deal(data: dict[str, Any]) -> Deal:
                 "is required"
             )
         recapitalisations = tuple(
-            _parse_recapitalisation(item, i) for i, item in enumerate(recaps_raw)
+            _parse_recapitalisation(item, i, frequency)
+            for i, item in enumerate(recaps_raw)
         )
 
     acquisitions: tuple[AddOn, ...] = ()
@@ -1454,7 +1510,7 @@ def parse_deal(data: dict[str, Any]) -> Deal:
                 "projection and an operating block are required"
             )
         acquisitions = tuple(
-            _parse_acquisition(item, i, len(grid))
+            _parse_acquisition(item, i, grid.years, frequency)
             for i, item in enumerate(acquisitions_raw)
         )
 
@@ -1473,7 +1529,8 @@ def parse_deal(data: dict[str, Any]) -> Deal:
                 "refinancings: an event lands in a period, so a projection is required"
             )
         refinancings = tuple(
-            _parse_refinancing(item, i) for i, item in enumerate(refinancings_raw)
+            _parse_refinancing(item, i, frequency)
+            for i, item in enumerate(refinancings_raw)
         )
 
     exit_multiple: Money | None = None
