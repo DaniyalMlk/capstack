@@ -166,7 +166,9 @@ class Certification:
     @property
     def interval(self) -> str:
         """How the measurement would be described on a compliance certificate."""
-        return f"twelve months to {self.window.closes.isoformat()}"
+        if self.window.complete:
+            return f"twelve months to {self.window.closes.isoformat()}"
+        return f"{self.window.days} days to {self.window.closes.isoformat()}"
 
     @classmethod
     def assemble(
@@ -305,7 +307,12 @@ class CovenantObservation:
         """
         if self.window is None:
             return f"period to {self.period.end.isoformat()}"
-        return f"twelve months to {self.window.closes.isoformat()}"
+        if self.window.complete:
+            return f"twelve months to {self.window.closes.isoformat()}"
+        # Said in days rather than rounded up to months, because the whole
+        # reason the row is untested is that the interval is not the one a
+        # certificate names, and describing it as a year would bury that.
+        return f"{self.window.days} days to {self.window.closes.isoformat()}"
 
     @property
     def breached(self) -> bool:

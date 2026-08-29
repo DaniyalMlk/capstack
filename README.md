@@ -993,6 +993,30 @@ leverage several turns worse than the deal carries and breach a covenant nobody
 has breached. The stub is recorded as untested with the reason on the row, and
 the leverage line shows nothing rather than a number.
 
+**A covenant is certified over the year behind the date, not over the column.**
+A maintenance test compares a stock against a flow, and a flow only means
+something over a stated interval. Every credit agreement names a year. On an
+annual grid the year is the column, which is why dividing one column by another
+was right for as long as the engine only had annual grids — and wrong by the
+frequency the moment it did not. On a quarterly grid a structure at 5.2x reads
+as 20.8x, every leverage test in the file breaches from the first certification,
+and the memo leads with a deal that fails.
+
+So the balances are the ones standing on the test date and the flows — earnings,
+cash interest, contractual repayment, capital expenditure, tax — are summed over
+the twelve months to it. The cash sweep steps on the same measure, because a
+grid that steps on leverage is asking the same question and would otherwise sit
+at its top rate for an entire hold.
+
+A date with fewer than twelve months behind it cannot certify. Nine months of
+earnings is not a conservative year, it is a different measure, and a ratio built
+on one reads a third too high — so the first three quarters of a quarterly grid
+are reported untested with the reason on the row, exactly as a stub already was,
+and the row says how long the interval actually was rather than calling it a
+year. The sweep falls back to the level the deal was priced at, which has to be a
+year of earnings too: falling back to the first entry of a trailing series would
+certify the opening structure at four times its leverage.
+
 **An assumption is annual, and a period is a share of a year.** The same deal
 file has to describe the same business whether the year is reported once or
 twelve times, and that single requirement settles four questions that look

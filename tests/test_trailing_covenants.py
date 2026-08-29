@@ -295,3 +295,20 @@ class TestTheSweepStepsOnAYearToo:
         quarterly = schedule(Frequency.QUARTERLY, sweep=self.grid())[0]
         annual = schedule(Frequency.ANNUAL, sweep=self.grid())[0]
         assert quarterly.certified_leverage == annual.certified_leverage
+
+
+class TestWhatTheReportSays:
+    def test_a_certified_row_names_the_year_it_was_measured_over(self) -> None:
+        tested = next(o for o in report(Frequency.QUARTERLY) if o.tested)
+        assert tested.interval == f"twelve months to {tested.period.end.isoformat()}"
+
+    def test_an_uncertified_row_does_not_claim_a_year(self) -> None:
+        """Calling nine months a year on the row that exists to say it is not."""
+        quiet = next(o for o in report(Frequency.QUARTERLY) if not o.tested)
+        assert "twelve months" not in quiet.interval
+        assert quiet.interval.endswith(quiet.period.end.isoformat())
+        assert "days to" in quiet.interval
+
+    def test_an_annual_row_reads_the_same_as_it_always_did(self) -> None:
+        tested = next(o for o in report(Frequency.ANNUAL) if o.tested)
+        assert tested.interval == f"twelve months to {tested.period.end.isoformat()}"
