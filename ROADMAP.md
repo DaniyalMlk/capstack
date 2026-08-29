@@ -92,10 +92,12 @@ monthly ones, and two things stop them being trustworthy on a leveraged deal.
       presentational problem but a covenant that breached in every period. The
       cash sweep stepped on the same figure and sat at its top rate for a whole
       hold. A date with fewer than twelve months behind it does not certify
-- [ ] A delayed-draw or acquisition facility described as a commitment rather
-      than as a term loan with nothing drawn. A commitment is only legal on a
-      revolver today, so a ticking fee cannot be charged on undrawn capacity and
-      a draw cannot be checked against the capacity that exists
+- [x] A delayed-draw or acquisition facility described as a commitment rather
+      than as a term loan with nothing drawn. A commitment was only legal on a
+      revolver, so a ticking fee could not be charged on undrawn capacity and a
+      draw could not be checked against the capacity that exists. A term
+      commitment states an availability period, ticks on the face not yet taken
+      down, and does not come back when it is repaid
 - [x] An annual assumption applied to a sub-annual grid. A growth rate stated
       annually was applied once per period rather than compounded across the
       year, a whole period booked a full year of trading rather than its share
