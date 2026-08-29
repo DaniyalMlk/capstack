@@ -993,6 +993,36 @@ leverage several turns worse than the deal carries and breach a covenant nobody
 has breached. The stub is recorded as untested with the reason on the row, and
 the leverage line shows nothing rather than a number.
 
+**A commitment is consumed by drawing on it, unless it revolves.** A revolver
+and a delayed-draw term loan look alike in a file — both are committed at close
+with nothing drawn, both charge a fee on the undrawn balance — and they behave
+differently in the one way that matters. Repaying a revolver restores its
+capacity, because that is what revolving means. Repaying a delayed-draw facility
+does not entitle anyone to draw it again. So the two measure "undrawn" against
+different things: a revolver against the balance outstanding, a term commitment
+against the cumulative face taken down since close, which is the figure the
+amortisation basis has been carrying all along. A model that used the balance for
+both would let a borrower draw an acquisition line, repay it out of cash flow,
+and draw it again, and would bill the ticking fee at its highest on the facility
+the borrower had repaid the most of.
+
+A term commitment has to state an availability period. A revolver is available
+until it matures and already knows when that is; a delayed-draw facility lapses
+on a date whether or not anyone drew it, and without that date there is nothing
+to stop a ticking fee running for the rest of the hold on capacity nobody can
+take down. Draws are checked against the capacity that exists, walked in date
+order, because two add-ons that each fit inside a facility can still overdraw it
+between them. A tranche with no commitment stays an uncommitted accordion: there
+is nothing to check a draw against, which is an honest description of what an
+accordion is.
+
+The alternative — describing the facility as a term loan already drawn at close,
+which is what the engine used to require — is wrong three ways. Interest is
+charged on money the business does not have. Leverage is overstated from close,
+so covenant headroom and the sweep step are both struck against a balance that
+does not exist. And the ticking fee, which is the actual cost of the arrangement
+and usually a third to a half of the margin, cannot be charged at all.
+
 **A covenant is certified over the year behind the date, not over the column.**
 A maintenance test compares a stock against a flow, and a flow only means
 something over a stated interval. Every credit agreement names a year. On an

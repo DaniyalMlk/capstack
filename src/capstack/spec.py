@@ -697,6 +697,7 @@ def _schedule_tranche(data: Any, index: int, periods: int) -> Tranche:
             swept=_flag(data, "swept", where),
             commitment=commitment,
             undrawn_fee=_optional_amount(data, "undrawn_fee", where),
+            availability=_whole(data, "availability", where),
             maturity=_whole(data, "maturity", where),
         )
     except ValueError as exc:

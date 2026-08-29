@@ -722,7 +722,7 @@ class TestExactness:
         assert row.sweep_repayment == money(80203)
 
     def test_a_commitment_fee_needs_a_commitment_to_be_charged_on(self) -> None:
-        with pytest.raises(ValueError, match="only a revolving facility has any"):
+        with pytest.raises(ValueError, match="needs a commitment"):
             fixed("Term Loan B", TrancheKind.TERM_LOAN, 100, undrawn_fee="0.005")
 
     def test_a_three_way_pro_rata_sweep_leaves_no_residue(self) -> None:
