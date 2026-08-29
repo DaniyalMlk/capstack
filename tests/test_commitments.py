@@ -14,7 +14,10 @@ arrangement — missing entirely.
 
 from __future__ import annotations
 
+import json
 from datetime import date
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -298,3 +301,42 @@ class TestRepaymentDoesNotRestoreIt:
         basis.retire("Delayed draw")
         assert basis.retired == frozenset({"Delayed draw"})
         assert basis.at("Delayed draw") == ZERO
+
+
+class TestTheShippedExample:
+    """The buy-and-build file carries a real committed facility."""
+
+    def deal(self) -> Any:
+        root = Path(__file__).resolve().parent.parent
+        with (root / "examples" / "thornbury.json").open() as handle:
+            return json.load(handle)
+
+    def facility(self) -> Any:
+        return next(
+            t for t in self.deal()["debt"] if t["name"] == "Acquisition facility"
+        )
+
+    def test_the_acquisition_facility_is_committed_and_ticks(self) -> None:
+        line = self.facility()
+        assert line["face"] == 0.0
+        assert line["commitment"] == 150.0
+        assert line["availability"] == 3
+        assert line["undrawn_fee"] > 0
+
+    def test_the_three_add_ons_fit_inside_it(self) -> None:
+        drawn = sum(
+            draw["amount"]
+            for event in self.deal()["acquisitions"]
+            for draw in event["draws"]
+            if draw["tranche"] == "Acquisition facility"
+        )
+        assert drawn == 133.0
+        assert drawn <= self.facility()["commitment"]
+
+    def test_every_draw_falls_inside_the_availability_period(self) -> None:
+        drawing = [
+            event["period"]
+            for event in self.deal()["acquisitions"]
+            if any(d["tranche"] == "Acquisition facility" for d in event["draws"])
+        ]
+        assert max(drawing) <= self.facility()["availability"]
