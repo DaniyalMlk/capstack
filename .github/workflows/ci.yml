@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    name: Tests on Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Test
+        run: pytest -q
+
+  checks:
+    name: Types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Type check
+        run: mypy --strict
+
+  package:
+    name: Wheel installs and runs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+      - name: Install the wheel into a clean environment
+        run: |
+          python -m venv /tmp/check
+          /tmp/check/bin/pip install dist/*.whl
+          /tmp/check/bin/python -c "import capstack; print(capstack.__version__)"
+      # Every command's --help, against the artefact that would be installed.
+      # argparse expands help strings through %-formatting at display time, so
+      # a literal per cent sign raises TypeError there and nowhere else: a
+      # suite exercises the commands and the commands work. Only --help is
+      # broken, and it is the first thing anybody types. This model is written
+      # in percentages, so the next help string is a likely place for one.
+      - name: Every command prints help
+        run: |
+          /tmp/check/bin/capstack --help > /dev/null
+          for sub in $(/tmp/check/bin/python - <<'PY'
+          import argparse
+          from capstack.cli import build_parser
+          for action in build_parser()._actions:
+              if isinstance(action, argparse._SubParsersAction):
+                  print(" ".join(sorted(action.choices)))
+                  break
+          PY
+          ); do
+            /tmp/check/bin/capstack "$sub" --help > /dev/null || {
+              echo "capstack $sub --help failed"; exit 1; }
+          done
+          echo "every command printed help"
+      - name: The installed command line runs a deal end to end
+        # A wheel that imports but cannot run a deal is not a working engine,
+        # so the check drives the waterfall and the returns over the bundled
+        # example rather than only importing the package.
+        run: |
+          /tmp/check/bin/capstack deal examples/meridian.json
+          /tmp/check/bin/capstack schedule examples/meridian.json
+          /tmp/check/bin/capstack covenants examples/meridian.json
+          /tmp/check/bin/capstack exit examples/meridian.json
+          /tmp/check/bin/capstack report examples/meridian.json > /dev/null

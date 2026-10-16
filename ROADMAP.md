@@ -113,3 +113,25 @@ monthly ones, and two things stop them being trustworthy on a leveraged deal.
       expanded over the years of the case rather than over its columns
 - [ ] Automated checks on every push. The suite and the type checker are run by
       hand, which is enough for one pair of eyes and not enough for two
+
+## Phase 10 — The work runs somewhere other than one machine
+
+- [x] A parametrised sweep that renders `--help` for the root parser and every
+      subcommand, since a help string is expanded only when it is displayed
+      and nothing had displayed one
+- [x] Commands enumerated by walking the parser, recursively, rather than
+      listed by hand
+- [x] A completeness check that every argument carries help at all — it passes
+      today, and exists so that it keeps passing
+- [x] Continuous integration: the suite on 3.11, 3.12 and 3.13, which is the
+      range the project claims to support
+- [x] `mypy --strict` over source and tests
+- [x] The wheel built, installed into a clean environment, and driven through
+      a whole deal — the waterfall, the covenant tests, the exit and the memo
+      — rather than only imported
+- [x] The help sweep run against that installed wheel
+- [ ] Lint: `ruff check` under the configuration the sibling projects use
+      reports 69 findings, led by 21 `zip` calls with no explicit `strict=`
+      and 12 long lines. Worth its own pass rather than a drive-by, since one
+      of them (`RUF032`, a `Decimal` built from a float literal) may be a
+      defect rather than a style point.
