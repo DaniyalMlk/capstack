@@ -135,3 +135,28 @@ monthly ones, and two things stop them being trustworthy on a leveraged deal.
       and 12 long lines. Worth its own pass rather than a drive-by, since one
       of them (`RUF032`, a `Decimal` built from a float literal) may be a
       defect rather than a style point.
+
+## Phase 11 — The linter runs, and the backlog behind it is gone
+
+- [x] A `[tool.ruff]` section matching the sibling projects, so a habit learnt
+      in one of them is the habit this one wants too
+- [x] Seventy-three findings cleared, in commits grouped by what they were
+      rather than by which file they were in
+- [x] `strict=True` or `itertools.pairwise` on all twenty-one zips: `zip` stops
+      at the shorter sequence, so a cash flow vector one element longer than
+      its time vector produces an NPV silently missing a flow
+- [x] Six exceptions renamed to the family's `Error` suffix, after checking
+      that the obvious rename for one of them would have made a class its own
+      parent
+- [x] `match=` patterns in `pytest.raises` declared as regex or escaped as
+      text; four were looser than they read, and one of those is a test about
+      an error message naming two rates of return
+- [x] The `Decimal(float)` finding exempted rather than fixed, with the reason
+      at the line: the binary value of 0.1 is what `money()` exists to avoid
+      producing, so the test has to construct it to compare against it
+- [x] A superseded annualisation deleted from the revenue build-up, and the
+      choice it lost to stated as two tests rather than as a comment —
+      including one asserting the two candidates differ on this case, since
+      otherwise the first would distinguish nothing
+- [x] The lint step added to CI only once the tree was green, because a lint
+      step on a red tree is a step somebody turns off
