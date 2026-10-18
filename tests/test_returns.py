@@ -7,10 +7,10 @@ import pytest
 from capstack.daycount import DayCount
 from capstack.money import money
 from capstack.returns import (
-    AmbiguousIRR,
+    AmbiguousIRRError,
     CashFlow,
     CashFlowStream,
-    NoSignChange,
+    NoSignChangeError,
     brent_root,
     cagr,
     irr_periodic,
@@ -120,25 +120,25 @@ class TestIRRInvariants:
 
 class TestIRRRefusals:
     def test_all_outflows_has_no_rate(self) -> None:
-        with pytest.raises(NoSignChange):
+        with pytest.raises(NoSignChangeError):
             irr_periodic(flows(-100, -100, -100))
 
     def test_all_inflows_has_no_rate(self) -> None:
-        with pytest.raises(NoSignChange):
+        with pytest.raises(NoSignChangeError):
             irr_periodic(flows(100, 100, 100))
 
     def test_all_zeros_has_no_rate(self) -> None:
-        with pytest.raises(NoSignChange):
+        with pytest.raises(NoSignChangeError):
             irr_periodic(flows(0, 0, 0))
 
     def test_a_single_flow_has_no_rate(self) -> None:
-        with pytest.raises(NoSignChange):
+        with pytest.raises(NoSignChangeError):
             irr_periodic(flows(-100))
 
     def test_two_sign_changes_give_two_rates_and_a_refusal(self) -> None:
         # -1000 + 2500x - 1560x^2 = 0 with x = 1/(1+r) factors to roots at
         # x = 5/6 and x = 10/13, that is 20% and 30%. Both are the IRR.
-        with pytest.raises(AmbiguousIRR) as caught:
+        with pytest.raises(AmbiguousIRRError) as caught:
             irr_periodic(flows(-1000, 2500, -1560))
         roots = caught.value.roots
         assert len(roots) == 2
@@ -146,12 +146,12 @@ class TestIRRRefusals:
         assert abs(roots[1] - 0.30) < 1e-9
 
     def test_the_ambiguity_message_names_both_rates(self) -> None:
-        with pytest.raises(AmbiguousIRR, match="20.000000%"):
+        with pytest.raises(AmbiguousIRRError, match="20.000000%"):
             irr_periodic(flows(-1000, 2500, -1560))
 
     def test_a_sign_change_that_is_only_a_zero_does_not_count(self) -> None:
         # Zeros are skipped, so this is still a pure outflow stream.
-        with pytest.raises(NoSignChange):
+        with pytest.raises(NoSignChangeError):
             irr_periodic(flows(-100, 0, -100))
 
     def test_a_follow_on_cheque_still_resolves_when_it_leaves_one_root(self) -> None:
@@ -314,7 +314,7 @@ class TestCashFlowStream:
 
     def test_single_dated_flow_has_no_rate(self) -> None:
         stream = CashFlowStream.of([(date(2026, 1, 1), -1000)])
-        with pytest.raises(NoSignChange):
+        with pytest.raises(NoSignChangeError):
             stream.xirr()
 
 

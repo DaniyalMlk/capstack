@@ -5,7 +5,7 @@ from .balance_sheet import (
     OpeningBalanceSheet,
     PurchaseAccounting,
     TargetBookBalanceSheet,
-    UnbalancedBalanceSheet,
+    UnbalancedBalanceSheetError,
 )
 from .covenants import (
     Covenant,
@@ -17,7 +17,7 @@ from .covenants import (
 from .daycount import DayCount, year_fraction
 from .debt import (
     CapitalStructure,
-    CircularityNotResolved,
+    CircularityError,
     DebtPeriod,
     DebtSchedule,
     InterestBasis,
@@ -72,11 +72,11 @@ from .outcome import (
 from .periods import Frequency, Period, PeriodGrid
 from .report import Report, Section
 from .returns import (
-    AmbiguousIRR,
+    AmbiguousIRRError,
     CashFlow,
     CashFlowStream,
     IRRError,
-    NoSignChange,
+    NoSignChangeError,
     cagr,
     irr_periodic,
     moic,
@@ -110,7 +110,7 @@ from .transaction import (
     LineItem,
     SourcesAndUses,
     Transaction,
-    UnbalancedTransaction,
+    UnbalancedTransactionError,
 )
 
 __version__ = "0.1.0"
@@ -120,7 +120,7 @@ __all__ = [
     "AddOn",
     "AddOnError",
     "AddOnOutcome",
-    "AmbiguousIRR",
+    "AmbiguousIRRError",
     "Attribution",
     "Axis",
     "BalanceSheetError",
@@ -131,7 +131,7 @@ __all__ = [
     "CashFlow",
     "CashFlowStream",
     "Cell",
-    "CircularityNotResolved",
+    "CircularityError",
     "Covenant",
     "CovenantObservation",
     "CovenantReport",
@@ -160,7 +160,7 @@ __all__ = [
     "Measure",
     "Metric",
     "Money",
-    "NoSignChange",
+    "NoSignChangeError",
     "OpeningBalanceSheet",
     "OperatingAssumptions",
     "OperatingModel",
@@ -195,8 +195,8 @@ __all__ = [
     "TrancheKind",
     "TranchePeriod",
     "Transaction",
-    "UnbalancedBalanceSheet",
-    "UnbalancedTransaction",
+    "UnbalancedBalanceSheetError",
+    "UnbalancedTransactionError",
     "Unit",
     "Vesting",
     "__version__",

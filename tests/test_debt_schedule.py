@@ -8,7 +8,7 @@ import pytest
 from capstack.daycount import DayCount
 from capstack.debt import (
     CapitalStructure,
-    CircularityNotResolved,
+    CircularityError,
     DebtSchedule,
     InterestBasis,
     Tranche,
@@ -532,7 +532,7 @@ class TestTheCircularity:
             fixed("Term Loan B", TrancheKind.TERM_LOAN, 1000, cash_rate="0.09", swept=True),
             max_iterations=2,
         )
-        with pytest.raises(CircularityNotResolved, match="did not settle within 2 iterations"):
+        with pytest.raises(CircularityError, match="did not settle within 2 iterations"):
             DebtSchedule.run(s, [YEAR], [200])
 
     def test_a_realistic_structure_settles_at_a_full_step(self) -> None:
@@ -563,7 +563,7 @@ class TestTheCircularity:
         s = structure(
             fixed("Seller note", TrancheKind.SELLER_NOTE, 100, pik_rate="2.00"),
         )
-        with pytest.raises(CircularityNotResolved, match="accreting faster"):
+        with pytest.raises(CircularityError, match="accreting faster"):
             DebtSchedule.run(s, [YEAR], [0])
 
 

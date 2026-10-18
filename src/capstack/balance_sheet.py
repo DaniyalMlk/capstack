@@ -43,7 +43,7 @@ __all__ = [
     "OpeningBalanceSheet",
     "PurchaseAccounting",
     "TargetBookBalanceSheet",
-    "UnbalancedBalanceSheet",
+    "UnbalancedBalanceSheetError",
 ]
 
 
@@ -51,7 +51,7 @@ class BalanceSheetError(ValueError):
     """The book position given cannot be reconciled with the transaction."""
 
 
-class UnbalancedBalanceSheet(BalanceSheetError):
+class UnbalancedBalanceSheetError(BalanceSheetError):
     """Assets do not equal liabilities plus equity."""
 
 
@@ -161,7 +161,7 @@ class OpeningBalanceSheet:
     def __post_init__(self) -> None:
         difference = self.total_assets - self.total_liabilities_and_equity
         if difference != 0:
-            raise UnbalancedBalanceSheet(
+            raise UnbalancedBalanceSheetError(
                 f"assets ({self.total_assets}) do not equal liabilities and equity "
                 f"({self.total_liabilities_and_equity}); the difference is {difference}"
             )

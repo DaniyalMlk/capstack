@@ -7,7 +7,7 @@ from capstack.balance_sheet import (
     OpeningBalanceSheet,
     PurchaseAccounting,
     TargetBookBalanceSheet,
-    UnbalancedBalanceSheet,
+    UnbalancedBalanceSheetError,
 )
 from capstack.money import money
 from capstack.transaction import DebtFunding, EntryValuation, LineItem, Transaction
@@ -268,7 +268,7 @@ class TestContradictoryInputs:
             )
 
     def test_a_hand_built_sheet_that_does_not_balance_is_refused(self) -> None:
-        with pytest.raises(UnbalancedBalanceSheet, match="the difference is"):
+        with pytest.raises(UnbalancedBalanceSheetError, match="the difference is"):
             OpeningBalanceSheet(
                 cash=money(100),
                 identifiable_assets=money(500),

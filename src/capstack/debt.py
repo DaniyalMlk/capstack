@@ -69,7 +69,7 @@ from .periods import Period, trailing_window
 __all__ = [
     "AmortisationBasis",
     "CapitalStructure",
-    "CircularityNotResolved",
+    "CircularityError",
     "DebtPeriod",
     "DebtSchedule",
     "InterestBasis",
@@ -708,7 +708,7 @@ MINIMUM_DAMPING = money("0.015625")
 RECONCILIATION_TOLERANCE = "1E-12"
 
 
-class CircularityNotResolved(RuntimeError):
+class CircularityError(RuntimeError):
     """The interest/balance fixed point did not converge.
 
     Raised rather than returning the last iterate, because an unconverged
@@ -1996,7 +1996,7 @@ def _solve_period(
         previous = residual
         guess = {k: guess[k] + damping * (produced[k] - guess[k]) for k in guess}
 
-    raise CircularityNotResolved(
+    raise CircularityError(
         f"period {period.index}: interest and balances did not settle within "
         f"{structure.max_iterations} iterations; the structure may be accreting "
         f"faster than the cash flow can service it"

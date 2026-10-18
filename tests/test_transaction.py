@@ -9,7 +9,7 @@ from capstack.transaction import (
     LineItem,
     SourcesAndUses,
     Transaction,
-    UnbalancedTransaction,
+    UnbalancedTransactionError,
 )
 
 
@@ -104,7 +104,7 @@ class TestSourcesAndUses:
         assert table.total_sources == table.total_uses == money(1000)
 
     def test_an_unbalanced_table_cannot_be_constructed(self) -> None:
-        with pytest.raises(UnbalancedTransaction, match="difference is 1"):
+        with pytest.raises(UnbalancedTransactionError, match="difference is 1"):
             SourcesAndUses(
                 sources=(LineItem("Debt", money(600)),),
                 uses=(LineItem("Purchase", money(599)),),

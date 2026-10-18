@@ -21,7 +21,7 @@ from .fees import FeeMethod
 from .money import quantize
 from .outcome import Outcome
 from .report import Report, prepare
-from .returns import AmbiguousIRR, CashFlow, CashFlowStream, IRRError
+from .returns import AmbiguousIRRError, CashFlow, CashFlowStream, IRRError
 from .sensitivity import Axis, Grid, Metric, SensitivityError, format_value
 from .spec import Deal, DealSpecError, load_deal
 from .transaction import Transaction
@@ -88,7 +88,7 @@ def _returns_report(stream: CashFlowStream) -> dict[str, Any]:
     }
     try:
         report["irr"] = stream.xirr()
-    except AmbiguousIRR as exc:
+    except AmbiguousIRRError as exc:
         report["irr"] = None
         report["irr_note"] = str(exc)
         report["irr_candidates"] = list(exc.roots)
