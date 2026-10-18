@@ -109,7 +109,9 @@ class Period:
 
     def __post_init__(self) -> None:
         if self.end < self.start:
-            raise ValueError(f"period {self.index} ends ({self.end}) before it starts ({self.start})")
+            raise ValueError(
+                f"period {self.index} ends ({self.end}) before it starts ({self.start})"
+            )
         if self.index < 0:
             raise ValueError("period index must not be negative")
         if self.periods_per_year < 1:

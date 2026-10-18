@@ -439,7 +439,8 @@ def _print_balance(report: dict[str, Any]) -> None:
         f"{_format_money(Decimal(report['total_liabilities_and_equity'])):>{amount_width}}"
     )
     print()
-    print(f"    {'Net debt':<{label_width}}  {_format_money(Decimal(report['net_debt'])):>{amount_width}}")
+    net_debt = _format_money(Decimal(report["net_debt"]))
+    print(f"    {'Net debt':<{label_width}}  {net_debt:>{amount_width}}")
     print(
         f"    {'Goodwill share of assets':<{label_width}}  "
         f"{report['goodwill_share_of_assets']:>{amount_width}.1%}"
@@ -1509,9 +1510,12 @@ def _print_fees(report: dict[str, Any]) -> None:
         )
 
     print()
-    print(f"    {'Capitalised at close':<34}{_format_money(Decimal(report['total_capitalised'])):>12}")
-    print(f"    {'Released if the paper runs to term':<34}{_format_money(Decimal(report['total_charged'])):>12}")
-    print(f"    {'Still capitalised at the end':<34}{_format_money(Decimal(report['unreleased'])):>12}")
+    for label, key in (
+        ("Capitalised at close", "total_capitalised"),
+        ("Released if the paper runs to term", "total_charged"),
+        ("Still capitalised at the end", "unreleased"),
+    ):
+        print(f"    {label:<34}{_format_money(Decimal(report[key])):>12}")
 
     if report["write_offs"]:
         print()

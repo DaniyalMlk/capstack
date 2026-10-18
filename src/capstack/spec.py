@@ -776,7 +776,9 @@ def _driver(value: Any, periods: int, where: str) -> Driver:
         if "ramp" in value:
             ends = value["ramp"]
             if not isinstance(ends, list) or len(ends) != 2:
-                raise DealSpecError(f"{where}.ramp: expected exactly two values, a start and an end")
+                raise DealSpecError(
+                    f"{where}.ramp: expected exactly two values, a start and an end"
+                )
             return Driver.ramp(_amount(ends[0], where), _amount(ends[1], where), periods)
         if "constant" in value:
             return Driver.constant(_amount(value["constant"], where), periods)
