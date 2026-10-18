@@ -218,7 +218,7 @@ def _npv_float(rate: float, amounts: Sequence[float], times: Sequence[float]) ->
     """Floating-point present value, for the solver's inner loop."""
     base = 1.0 + rate
     total = 0.0
-    for amount, t in zip(amounts, times):
+    for amount, t in zip(amounts, times, strict=True):
         total += amount / (base**t)
     return total
 

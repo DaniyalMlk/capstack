@@ -148,7 +148,7 @@ def effective_rate(
     if proceeds <= 0:
         raise ValueError("paper that raised nothing has no effective rate")
 
-    flows = [float(o * coupon + p) for o, p in zip(opening, principal)]
+    flows = [float(o * coupon + p) for o, p in zip(opening, principal, strict=True)]
     target = float(proceeds)
 
     def carrying_at_maturity(rate: float) -> float:

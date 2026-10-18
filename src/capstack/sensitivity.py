@@ -173,7 +173,7 @@ def _with_leverage(deal: Deal, turns: Money) -> Deal:
         )
     target = deal.transaction.valuation.ltm_ebitda * turns
     faces = rescale(target, [t.face for t in deal.transaction.debt])
-    sized = dict(zip((t.name for t in deal.transaction.debt), faces))
+    sized = dict(zip((t.name for t in deal.transaction.debt), faces, strict=True))
     transaction = dataclasses.replace(
         deal.transaction,
         debt=tuple(

@@ -1167,7 +1167,7 @@ def _print_sensitivity(report: dict[str, Any]) -> None:
     # rather than hunting for a decorated cell in the middle of the table.
     headings = [
         label + (_BASE_MARK if flag else "")
-        for label, flag in zip(columns["labels"], columns["base"])
+        for label, flag in zip(columns["labels"], columns["base"], strict=True)
     ]
     stub = max((len(label) for label in rows["labels"]), default=0) + 2
     width = max(

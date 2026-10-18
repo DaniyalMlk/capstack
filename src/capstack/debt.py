@@ -1830,7 +1830,7 @@ def _one_pass(
             for t in revolvers
         ]
         drawn = allocate_pro_rata(need, capacity)
-        for tranche, amount in zip(revolvers, drawn):
+        for tranche, amount in zip(revolvers, drawn, strict=True):
             draw[tranche.name] = amount
         after_mandatory += sum(drawn, ZERO)
 
@@ -1870,7 +1870,7 @@ def _one_pass(
             )
             for t in group
         ]
-        for tranche, amount in zip(group, allocate_pro_rata(pot, balances)):
+        for tranche, amount in zip(group, allocate_pro_rata(pot, balances), strict=True):
             sweep[tranche.name] = amount
             pot -= amount
 
