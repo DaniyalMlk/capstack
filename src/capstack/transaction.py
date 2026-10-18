@@ -24,11 +24,11 @@ __all__ = [
     "LineItem",
     "SourcesAndUses",
     "Transaction",
-    "UnbalancedTransaction",
+    "UnbalancedTransactionError",
 ]
 
 
-class UnbalancedTransaction(ValueError):
+class UnbalancedTransactionError(ValueError):
     """Sources and uses do not agree."""
 
 
@@ -190,7 +190,7 @@ class SourcesAndUses:
 
     def __post_init__(self) -> None:
         if self.total_sources != self.total_uses:
-            raise UnbalancedTransaction(
+            raise UnbalancedTransactionError(
                 f"sources ({self.total_sources}) do not equal uses ({self.total_uses}); "
                 f"the difference is {self.total_sources - self.total_uses}"
             )

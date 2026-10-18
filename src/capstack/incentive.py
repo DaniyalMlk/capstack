@@ -47,6 +47,7 @@ where the hurdle binds has to pick between two answers on either side of a cliff
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 
@@ -203,7 +204,7 @@ class Ratchet:
                 f"the pool's entitlement below that is undescribed; start the "
                 f"bands at 0"
             )
-        for lower, upper in zip(self.bands, self.bands[1:]):
+        for lower, upper in itertools.pairwise(self.bands):
             if upper.hurdle <= lower.hurdle:
                 raise IncentiveError(
                     f"hurdles must step up: {upper.hurdle} does not come after "
@@ -215,7 +216,7 @@ class Ratchet:
                     f"one below pays {lower.share}; a plan that pays less for a "
                     f"better outcome is not a ratchet"
                 )
-        if len(set(name.strip() for name in self.measured_on)) != len(self.measured_on):
+        if len({name.strip() for name in self.measured_on}) != len(self.measured_on):
             raise IncentiveError("the instruments a ratchet is measured on must be distinct")
 
     def __len__(self) -> int:
@@ -262,7 +263,7 @@ class Ratchet:
         opens: list[Money] = [ZERO]
         pot = ZERO
         proceeds = measured_prior
-        for lower, upper in zip(self.bands, self.bands[1:]):
+        for lower, upper in itertools.pairwise(self.bands):
             target = upper.hurdle * measured_capital
             slope = measured_ownership * (ONE - vested * lower.share)
             if slope <= 0:

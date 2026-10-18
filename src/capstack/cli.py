@@ -10,18 +10,19 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Sequence
 from datetime import date
 from decimal import Decimal
-from typing import Any, Sequence
+from typing import Any
 
 from .covenants import CovenantObservation
 from .daycount import DayCount
+from .fees import FeeMethod
 from .money import quantize
 from .outcome import Outcome
 from .report import Report, prepare
-from .returns import AmbiguousIRR, CashFlow, CashFlowStream, IRRError
+from .returns import AmbiguousIRRError, CashFlow, CashFlowStream, IRRError
 from .sensitivity import Axis, Grid, Metric, SensitivityError, format_value
-from .fees import FeeMethod
 from .spec import Deal, DealSpecError, load_deal
 from .transaction import Transaction
 
@@ -45,7 +46,7 @@ def _parse_flow(token: str) -> CashFlow:
         raise argparse.ArgumentTypeError(f"not a date: {when_text!r}") from exc
     try:
         amount = Decimal(amount_text.strip().replace("_", "").replace(",", ""))
-    except Exception as exc:  # noqa: BLE001 - argparse wants one error type
+    except Exception as exc:
         raise argparse.ArgumentTypeError(f"not an amount: {amount_text!r}") from exc
     return CashFlow(when=when, amount=amount, label=label)
 
@@ -87,7 +88,7 @@ def _returns_report(stream: CashFlowStream) -> dict[str, Any]:
     }
     try:
         report["irr"] = stream.xirr()
-    except AmbiguousIRR as exc:
+    except AmbiguousIRRError as exc:
         report["irr"] = None
         report["irr_note"] = str(exc)
         report["irr_candidates"] = list(exc.roots)
@@ -438,7 +439,8 @@ def _print_balance(report: dict[str, Any]) -> None:
         f"{_format_money(Decimal(report['total_liabilities_and_equity'])):>{amount_width}}"
     )
     print()
-    print(f"    {'Net debt':<{label_width}}  {_format_money(Decimal(report['net_debt'])):>{amount_width}}")
+    net_debt = _format_money(Decimal(report["net_debt"]))
+    print(f"    {'Net debt':<{label_width}}  {net_debt:>{amount_width}}")
     print(
         f"    {'Goodwill share of assets':<{label_width}}  "
         f"{report['goodwill_share_of_assets']:>{amount_width}.1%}"
@@ -1166,7 +1168,7 @@ def _print_sensitivity(report: dict[str, Any]) -> None:
     # rather than hunting for a decorated cell in the middle of the table.
     headings = [
         label + (_BASE_MARK if flag else "")
-        for label, flag in zip(columns["labels"], columns["base"])
+        for label, flag in zip(columns["labels"], columns["base"], strict=True)
     ]
     stub = max((len(label) for label in rows["labels"]), default=0) + 2
     width = max(
@@ -1508,9 +1510,12 @@ def _print_fees(report: dict[str, Any]) -> None:
         )
 
     print()
-    print(f"    {'Capitalised at close':<34}{_format_money(Decimal(report['total_capitalised'])):>12}")
-    print(f"    {'Released if the paper runs to term':<34}{_format_money(Decimal(report['total_charged'])):>12}")
-    print(f"    {'Still capitalised at the end':<34}{_format_money(Decimal(report['unreleased'])):>12}")
+    for label, key in (
+        ("Capitalised at close", "total_capitalised"),
+        ("Released if the paper runs to term", "total_charged"),
+        ("Still capitalised at the end", "unreleased"),
+    ):
+        print(f"    {label:<34}{_format_money(Decimal(report[key])):>12}")
 
     if report["write_offs"]:
         print()

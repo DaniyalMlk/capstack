@@ -15,6 +15,7 @@ compounding. A schedule anchored on 31 January runs 31 Jan, 28 Feb, 31 Mar, not
 from __future__ import annotations
 
 import calendar
+import itertools
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -29,8 +30,8 @@ __all__ = [
     "PeriodGrid",
     "TrailingWindow",
     "add_months",
-    "trailing_window",
     "end_of_month",
+    "trailing_window",
 ]
 
 
@@ -108,7 +109,9 @@ class Period:
 
     def __post_init__(self) -> None:
         if self.end < self.start:
-            raise ValueError(f"period {self.index} ends ({self.end}) before it starts ({self.start})")
+            raise ValueError(
+                f"period {self.index} ends ({self.end}) before it starts ({self.start})"
+            )
         if self.index < 0:
             raise ValueError("period index must not be negative")
         if self.periods_per_year < 1:
@@ -284,7 +287,7 @@ class PeriodGrid:
                 f"period {mismatched[0].index} divides its year into "
                 f"{mismatched[0].periods_per_year} but the grid is {self.frequency}"
             )
-        for earlier, later in zip(self.periods, self.periods[1:]):
+        for earlier, later in itertools.pairwise(self.periods):
             if later.start != earlier.end:
                 raise ValueError(
                     f"gap in grid: period {earlier.index} ends {earlier.end} "

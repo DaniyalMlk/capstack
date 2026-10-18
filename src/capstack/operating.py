@@ -463,10 +463,8 @@ class OperatingModel:
             # operating case by a year.
             if period.is_stub:
                 organic = money(opening_revenue) * elapsed
-                organic_annualised = money(opening_revenue)
             else:
                 organic = annual_revenue[j] * weights[j][position % ppy]
-                organic_annualised = organic / elapsed
 
             # The organic line is the platform. Acquired revenue is added to the
             # period's total but never to the platform, because each stream

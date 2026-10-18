@@ -57,7 +57,7 @@ from enum import Enum
 from .debt import DebtPeriod, DebtSchedule
 from .drivers import Driver
 from .money import ZERO, Money, Numeric, money
-from .operating import OperatingModel, OperatingPeriod
+from .operating import OperatingModel
 from .periods import Period, TrailingWindow, trailing_window
 
 __all__ = [

@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from capstack.cli import main
 from capstack.daycount import DayCount
 from capstack.debt import (
     AmortisationBasis,
@@ -26,8 +27,6 @@ from capstack.drivers import Driver
 from capstack.events import AddOn, Draw, Recapitalisation, Refinancing
 from capstack.money import ZERO, money
 from capstack.periods import Frequency, Period, PeriodGrid
-
-from capstack.cli import main
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 KESTREL = str(EXAMPLES / "kestrel.json")

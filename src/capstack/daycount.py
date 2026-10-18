@@ -17,7 +17,7 @@ from enum import Enum
 
 from .money import Money, money
 
-__all__ = ["DayCount", "year_fraction", "days_between", "is_leap_year"]
+__all__ = ["DayCount", "days_between", "is_leap_year", "year_fraction"]
 
 
 class DayCount(Enum):

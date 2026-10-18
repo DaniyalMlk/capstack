@@ -69,15 +69,15 @@ from .periods import Period, trailing_window
 __all__ = [
     "AmortisationBasis",
     "CapitalStructure",
-    "CircularityNotResolved",
+    "CircularityError",
     "DebtPeriod",
     "DebtSchedule",
     "InterestBasis",
     "SweepGrid",
     "SweepStep",
     "Tranche",
-    "TranchePeriod",
     "TrancheKind",
+    "TranchePeriod",
 ]
 
 
@@ -708,7 +708,7 @@ MINIMUM_DAMPING = money("0.015625")
 RECONCILIATION_TOLERANCE = "1E-12"
 
 
-class CircularityNotResolved(RuntimeError):
+class CircularityError(RuntimeError):
     """The interest/balance fixed point did not converge.
 
     Raised rather than returning the last iterate, because an unconverged
@@ -1830,7 +1830,7 @@ def _one_pass(
             for t in revolvers
         ]
         drawn = allocate_pro_rata(need, capacity)
-        for tranche, amount in zip(revolvers, drawn):
+        for tranche, amount in zip(revolvers, drawn, strict=True):
             draw[tranche.name] = amount
         after_mandatory += sum(drawn, ZERO)
 
@@ -1870,7 +1870,7 @@ def _one_pass(
             )
             for t in group
         ]
-        for tranche, amount in zip(group, allocate_pro_rata(pot, balances)):
+        for tranche, amount in zip(group, allocate_pro_rata(pot, balances), strict=True):
             sweep[tranche.name] = amount
             pot -= amount
 
@@ -1996,7 +1996,7 @@ def _solve_period(
         previous = residual
         guess = {k: guess[k] + damping * (produced[k] - guess[k]) for k in guess}
 
-    raise CircularityNotResolved(
+    raise CircularityError(
         f"period {period.index}: interest and balances did not settle within "
         f"{structure.max_iterations} iterations; the structure may be accreting "
         f"faster than the cash flow can service it"

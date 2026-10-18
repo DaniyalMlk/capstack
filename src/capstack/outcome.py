@@ -546,7 +546,7 @@ class _Ledger:
                 if s.kind is SecurityKind.PREFERRED and s.seniority == rank
             ]
             claims = [self.capital[i] + self.accrued[i] for i in members]
-            for i, amount in zip(members, allocate_pro_rata(remaining, claims)):
+            for i, amount in zip(members, allocate_pro_rata(remaining, claims), strict=True):
                 paid[i] = amount
                 remaining -= amount
                 # Accrued return first, then capital. The remaining capital is
@@ -743,7 +743,7 @@ class Outcome:
             pool=incentive,
             is_exit=True,
         )
-        payments = tuple(interim) + (final,)
+        payments = (*tuple(interim), final)
 
         rows = []
         for i, holder in enumerate(holders):

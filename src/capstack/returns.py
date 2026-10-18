@@ -36,17 +36,17 @@ from .daycount import DayCount, year_fraction
 from .money import ZERO, Money, Numeric, money, to_float
 
 __all__ = [
+    "AmbiguousIRRError",
     "CashFlow",
     "CashFlowStream",
+    "DidNotConvergeError",
     "IRRError",
-    "NoSignChange",
-    "AmbiguousIRR",
-    "DidNotConverge",
+    "NoSignChangeError",
     "brent_root",
-    "npv_periodic",
+    "cagr",
     "irr_periodic",
     "moic",
-    "cagr",
+    "npv_periodic",
 ]
 
 
@@ -54,11 +54,11 @@ class IRRError(ValueError):
     """Base for every reason an internal rate of return cannot be reported."""
 
 
-class NoSignChange(IRRError):
+class NoSignChangeError(IRRError):
     """The stream never changes sign, so no rate sets its present value to zero."""
 
 
-class AmbiguousIRR(IRRError):
+class AmbiguousIRRError(IRRError):
     """More than one rate sets the present value to zero.
 
     Carries every root found so the caller can decide what to do — typically
@@ -74,7 +74,7 @@ class AmbiguousIRR(IRRError):
         )
 
 
-class DidNotConverge(IRRError):
+class DidNotConvergeError(IRRError):
     """The solver exhausted its iteration budget inside a valid bracket."""
 
 
@@ -150,7 +150,7 @@ def brent_root(
             xcur += delta if sbis > 0.0 else -delta
         fcur = f(xcur)
 
-    raise DidNotConverge(f"no root after {max_iter} iterations")
+    raise DidNotConvergeError(f"no root after {max_iter} iterations")
 
 
 # --------------------------------------------------------------------------
@@ -179,7 +179,7 @@ def _scan_grid() -> list[float]:
     """Rates at which the present value is sampled looking for sign changes."""
     grid = [RATE_FLOOR]
     for lower, upper, step in _SCAN_BANDS:
-        count = int(round((upper - lower) / step))
+        count = round((upper - lower) / step)
         grid.extend(lower + i * step for i in range(1, count + 1))
     return grid
 
@@ -218,7 +218,7 @@ def _npv_float(rate: float, amounts: Sequence[float], times: Sequence[float]) ->
     """Floating-point present value, for the solver's inner loop."""
     base = 1.0 + rate
     total = 0.0
-    for amount, t in zip(amounts, times):
+    for amount, t in zip(amounts, times, strict=True):
         total += amount / (base**t)
     return total
 
@@ -230,7 +230,7 @@ def _solve_rate(amounts: Sequence[Money], times: Sequence[float]) -> float:
     there is no root, or if there is more than one.
     """
     if _sign_changes(amounts) == 0:
-        raise NoSignChange(
+        raise NoSignChangeError(
             "the stream does not change sign, so it has no internal rate of return"
         )
 
@@ -264,12 +264,12 @@ def _solve_rate(amounts: Sequence[Money], times: Sequence[float]) -> float:
             distinct.append(r)
 
     if not distinct:
-        raise NoSignChange(
+        raise NoSignChangeError(
             "the stream changes sign but no rate in the search range sets its "
             "present value to zero"
         )
     if len(distinct) > 1:
-        raise AmbiguousIRR(distinct)
+        raise AmbiguousIRRError(distinct)
     return distinct[0]
 
 
@@ -280,7 +280,7 @@ def irr_periodic(amounts: Sequence[Money]) -> float:
     quarterly stream returns a quarterly rate.
     """
     if len(amounts) < 2:
-        raise NoSignChange("a single cash flow has no rate of return")
+        raise NoSignChangeError("a single cash flow has no rate of return")
     times = [float(i) for i in range(len(amounts))]
     return _solve_rate(amounts, times)
 
@@ -415,7 +415,7 @@ class CashFlowStream:
         genuine annual figure rather than a per-period one.
         """
         if len(self.flows) < 2:
-            raise NoSignChange("a single cash flow has no rate of return")
+            raise NoSignChangeError("a single cash flow has no rate of return")
         return _solve_rate(self.amounts, self._times())
 
     def moic(self) -> Money:

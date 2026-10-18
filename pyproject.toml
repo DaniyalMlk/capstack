@@ -13,7 +13,7 @@ authors = [{ name = "Daniyal" }]
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "mypy>=1.8"]
+dev = ["pytest>=8.0", "mypy>=1.8", "ruff>=0.4"]
 
 [project.scripts]
 capstack = "capstack.cli:main"
@@ -31,3 +31,19 @@ strict = true
 files = ["src", "tests"]
 warn_unreachable = true
 disallow_any_explicit = false
+
+# The same rule set the sibling projects run, so that a habit learnt in one of
+# them is the habit this one wants too. The three RUF00x exclusions are the
+# unicode look-alike checks: the prose here uses en dashes and typographic
+# quotes on purpose.
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "N", "C4", "PIE"]
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.per-file-ignores]
+# A test's name is its documentation and wrapping one costs more than it buys.
+"tests/*" = ["E501"]

@@ -229,7 +229,10 @@ def _transaction(deal: Deal, case: Case) -> Section:
                 _amount(transaction.sponsor_equity),
                 "the plug that balances the funding table",
             ),
-            Line("Fees and issue discount", _amount(transaction.total_fees + transaction.original_issue_discount)),
+            Line(
+                "Fees and issue discount",
+                _amount(transaction.total_fees + transaction.original_issue_discount),
+            ),
             Line("Cash at close", _amount(opening_cash)),
             Line("Net leverage at close", _turns(leverage)),
         ),
@@ -943,11 +946,11 @@ def _bridge(outcome: Outcome) -> Section:
         ),
         table=Table(
             headings=("Source", "Value", "Share of gross"),
-            rows=tuple(
-                (label, _amount(amount), _percent(abs(attribution.share(amount))))
-                for label, amount in components
-            )
-            + (
+            rows=(
+                *(
+                    (label, _amount(amount), _percent(abs(attribution.share(amount))))
+                    for label, amount in components
+                ),
                 ("Value created", _amount(attribution.total), ""),
             ),
         ),

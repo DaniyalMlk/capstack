@@ -15,26 +15,25 @@ carried at high precision and rounded only when it is presented.
 
 from __future__ import annotations
 
-from decimal import ROUND_HALF_EVEN, Context, Decimal, InvalidOperation, setcontext
 from collections.abc import Sequence
-from typing import Union
+from decimal import ROUND_HALF_EVEN, Context, Decimal, InvalidOperation, setcontext
 
 __all__ = [
+    "ONE",
+    "ZERO",
     "Money",
     "Numeric",
-    "ZERO",
-    "ONE",
-    "money",
-    "rate",
-    "to_float",
-    "quantize",
-    "safe_div",
-    "is_close",
     "allocate_pro_rata",
+    "is_close",
+    "money",
+    "quantize",
+    "rate",
+    "safe_div",
+    "to_float",
 ]
 
 Money = Decimal
-Numeric = Union[int, str, float, Decimal]
+Numeric = int | str | float | Decimal
 
 #: Working precision. Deal models run to the billions with cent-level detail,
 #: which is about 12 significant digits; 34 leaves ample room for intermediate

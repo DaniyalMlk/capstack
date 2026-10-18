@@ -18,15 +18,14 @@ from capstack.cli import main
 from capstack.daycount import DayCount
 from capstack.debt import CapitalStructure, Tranche, TrancheKind
 from capstack.drivers import Driver
+from capstack.events import Refinancing, RefinancingError
 from capstack.fees import (
     FeeMethod,
-    FeePeriod,
     FeeSchedule,
     TrancheFees,
     contractual_profile,
     effective_rate,
 )
-from capstack.events import Draw, Refinancing, RefinancingError
 from capstack.money import ZERO, is_close, money
 from capstack.spec import DealSpecError, load_deal
 
@@ -93,7 +92,7 @@ class TestTheContractualProfile:
     def test_paper_outliving_the_grid_repays_at_the_end_of_it(self) -> None:
         # A model cannot amortise past its own horizon, so the profile the rate
         # is solved against ends where the grid does.
-        opening, principal = contractual_profile(bullet(maturity=None), 3)
+        _opening, principal = contractual_profile(bullet(maturity=None), 3)
         assert principal == [ZERO, ZERO, money(100)]
 
     def test_it_refuses_a_profile_with_no_periods(self) -> None:

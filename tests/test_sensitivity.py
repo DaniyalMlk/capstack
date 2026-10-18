@@ -345,7 +345,7 @@ class TestCellsThatCannotBeValued:
             }
         )
         assert deal is not None
-        with pytest.raises(ValueError, match="no operating case|no capital structure"):
+        with pytest.raises(ValueError, match=r"no operating case|no capital structure"):
             Grid.run(
                 broken,
                 Axis.of(Dimension.ENTRY_MULTIPLE, ["8"]),
@@ -599,7 +599,7 @@ class TestBreakevens:
 
     def test_fewer_steps_give_a_wider_answer(self) -> None:
         deal = example()
-        kwargs = dict(target=money(1), low=money(2), high=money(20))
+        kwargs = {"target": money(1), "low": money(2), "high": money(20)}
         coarse = solve(
             deal, Dimension.EXIT_MULTIPLE, Metric.MOIC, steps=4, **kwargs
         )

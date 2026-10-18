@@ -43,7 +43,7 @@ from decimal import Decimal, InvalidOperation
 from enum import Enum
 
 from .covenants import CovenantReport
-from .debt import CircularityNotResolved, DebtSchedule
+from .debt import CircularityError, DebtSchedule
 from .drivers import Driver
 from .money import ONE, ZERO, Money, money, quantize, rescale, safe_div
 from .operating import OperatingAssumptions, OperatingModel
@@ -73,7 +73,7 @@ class SensitivityError(ValueError):
 #: Failures that mean *this cell has no answer* rather than *the request was
 #: malformed*. ``ArithmeticError`` covers both a division by zero and a decimal
 #: operation that overflows, which a far enough flex will eventually produce.
-CELL_FAILURES = (ValueError, ArithmeticError, CircularityNotResolved)
+CELL_FAILURES = (ValueError, ArithmeticError, CircularityError)
 
 
 class Unit(Enum):
@@ -173,7 +173,7 @@ def _with_leverage(deal: Deal, turns: Money) -> Deal:
         )
     target = deal.transaction.valuation.ltm_ebitda * turns
     faces = rescale(target, [t.face for t in deal.transaction.debt])
-    sized = dict(zip((t.name for t in deal.transaction.debt), faces))
+    sized = dict(zip((t.name for t in deal.transaction.debt), faces, strict=True))
     transaction = dataclasses.replace(
         deal.transaction,
         debt=tuple(
