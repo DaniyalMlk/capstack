@@ -25,7 +25,10 @@ class TestMoneyConstruction:
         # The whole point of the module. Decimal(0.1) is 0.1000000000000000055...
         # and money(0.1) must not be.
         assert money(0.1) == Decimal("0.1")
-        assert money(0.1) != Decimal(0.1)
+        # RUF032 flags Decimal(float) as the classic mistake. Here it is the
+        # thing being asserted against: the binary value of 0.1 is what money()
+        # exists to avoid producing, so this line has to build it to compare.
+        assert money(0.1) != Decimal(0.1)  # noqa: RUF032
 
     def test_float_repr_round_trip_holds_for_awkward_values(self) -> None:
         for value in (0.07, 0.375, 1.1, 2.675, 0.0575):

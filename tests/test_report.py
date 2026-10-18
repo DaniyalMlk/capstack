@@ -232,7 +232,7 @@ class TestRendering:
     def test_markdown_tables_carry_an_alignment_rule_per_column(self) -> None:
         markdown = prepare(example(), breakevens=False).as_markdown()
         for line in markdown.splitlines():
-            if line.startswith("|---") or line.startswith("|---:"):
+            if line.startswith(("|---", "|---:")):
                 cells = [c for c in line.split("|") if c]
                 assert all(c in ("---", "---:") for c in cells)
 

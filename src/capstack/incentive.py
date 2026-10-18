@@ -216,7 +216,7 @@ class Ratchet:
                     f"one below pays {lower.share}; a plan that pays less for a "
                     f"better outcome is not a ratchet"
                 )
-        if len(set(name.strip() for name in self.measured_on)) != len(self.measured_on):
+        if len({name.strip() for name in self.measured_on}) != len(self.measured_on):
             raise IncentiveError("the instruments a ratchet is measured on must be distinct")
 
     def __len__(self) -> int:

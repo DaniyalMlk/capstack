@@ -471,7 +471,7 @@ class TestTheMemo:
     def test_the_write_off_is_labelled_non_cash(self) -> None:
         report = prepare(load_deal(THORNBURY), breakevens=False)
         section = report.section("Refinanced during the hold")
-        line = next(l for l in section.lines if l.label == "Fees written off")
+        line = next(each for each in section.lines if each.label == "Fees written off")
         assert "non-cash" in line.note
 
     def test_a_deal_with_no_takeout_has_no_such_section(self) -> None:

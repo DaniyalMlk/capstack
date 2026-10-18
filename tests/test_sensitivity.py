@@ -599,7 +599,7 @@ class TestBreakevens:
 
     def test_fewer_steps_give_a_wider_answer(self) -> None:
         deal = example()
-        kwargs = dict(target=money(1), low=money(2), high=money(20))
+        kwargs = {"target": money(1), "low": money(2), "high": money(20)}
         coarse = solve(
             deal, Dimension.EXIT_MULTIPLE, Metric.MOIC, steps=4, **kwargs
         )

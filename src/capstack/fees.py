@@ -372,7 +372,7 @@ def _with_stub(released: TrancheFees) -> TrancheFees:
         )
         for p in released.periods
     )
-    return dataclasses.replace(released, periods=(stub,) + shifted)
+    return dataclasses.replace(released, periods=(stub, *shifted))
 
 
 def _straight_line(amount: Money, life: int, periods: int) -> list[FeePeriod]:

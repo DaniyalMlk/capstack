@@ -943,13 +943,7 @@ def _bridge(outcome: Outcome) -> Section:
         ),
         table=Table(
             headings=("Source", "Value", "Share of gross"),
-            rows=tuple(
-                (label, _amount(amount), _percent(abs(attribution.share(amount))))
-                for label, amount in components
-            )
-            + (
-                ("Value created", _amount(attribution.total), ""),
-            ),
+            rows=(*tuple((label, _amount(amount), _percent(abs(attribution.share(amount)))) for label, amount in components), ("Value created", _amount(attribution.total), "")),
         ),
         notes=tuple(notes),
     )

@@ -92,7 +92,7 @@ class TestTheContractualProfile:
     def test_paper_outliving_the_grid_repays_at_the_end_of_it(self) -> None:
         # A model cannot amortise past its own horizon, so the profile the rate
         # is solved against ends where the grid does.
-        opening, principal = contractual_profile(bullet(maturity=None), 3)
+        _opening, principal = contractual_profile(bullet(maturity=None), 3)
         assert principal == [ZERO, ZERO, money(100)]
 
     def test_it_refuses_a_profile_with_no_periods(self) -> None:

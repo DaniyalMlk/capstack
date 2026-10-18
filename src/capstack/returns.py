@@ -179,7 +179,7 @@ def _scan_grid() -> list[float]:
     """Rates at which the present value is sampled looking for sign changes."""
     grid = [RATE_FLOOR]
     for lower, upper, step in _SCAN_BANDS:
-        count = int(round((upper - lower) / step))
+        count = round((upper - lower) / step)
         grid.extend(lower + i * step for i in range(1, count + 1))
     return grid
 

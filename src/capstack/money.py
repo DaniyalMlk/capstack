@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from decimal import ROUND_HALF_EVEN, Context, Decimal, InvalidOperation, setcontext
-from typing import Union
 
 __all__ = [
     "ONE",
@@ -34,7 +33,7 @@ __all__ = [
 ]
 
 Money = Decimal
-Numeric = Union[int, str, float, Decimal]
+Numeric = int | str | float | Decimal
 
 #: Working precision. Deal models run to the billions with cent-level detail,
 #: which is about 12 significant digits; 34 leaves ample room for intermediate

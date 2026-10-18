@@ -743,7 +743,7 @@ class Outcome:
             pool=incentive,
             is_exit=True,
         )
-        payments = tuple(interim) + (final,)
+        payments = (*tuple(interim), final)
 
         rows = []
         for i, holder in enumerate(holders):

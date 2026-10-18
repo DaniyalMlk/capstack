@@ -2,7 +2,7 @@ import json
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -507,7 +507,9 @@ class TestShippedExampleBalanceSheet:
 
 
 class TestStructureBlock:
-    BASE = {
+    # Read by every test here and mutated by none, so sharing one copy is
+    # the intent rather than an accident waiting to surprise somebody.
+    BASE: ClassVar[dict[str, object]] = {
         "entry": {"ltm_ebitda": 100, "multiple": 10},
         "close_date": "2026-06-30",
         "debt": [
