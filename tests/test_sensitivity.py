@@ -345,7 +345,7 @@ class TestCellsThatCannotBeValued:
             }
         )
         assert deal is not None
-        with pytest.raises(ValueError, match="no operating case|no capital structure"):
+        with pytest.raises(ValueError, match=r"no operating case|no capital structure"):
             Grid.run(
                 broken,
                 Axis.of(Dimension.ENTRY_MULTIPLE, ["8"]),

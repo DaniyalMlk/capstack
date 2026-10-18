@@ -172,7 +172,7 @@ class TestLoadErrors:
             parse_deal({**MINIMAL, "debt": [{"name": "A", "face": 1}, {"name": "B"}]})
 
     def test_a_bad_number_names_its_field(self) -> None:
-        with pytest.raises(DealSpecError, match="entry.existing_debt: not a number"):
+        with pytest.raises(DealSpecError, match=r"entry\.existing_debt: not a number"):
             parse_deal({"entry": {"ltm_ebitda": 100, "multiple": 10, "existing_debt": "lots"}})
 
     def test_a_bad_close_date(self) -> None:
@@ -362,7 +362,7 @@ class TestDriverParsing:
             self._run({"trend": 0.05})
 
     def test_a_bad_number_inside_a_driver_names_the_field(self) -> None:
-        with pytest.raises(DealSpecError, match="operating.revenue_growth: not a number"):
+        with pytest.raises(DealSpecError, match=r"operating\.revenue_growth: not a number"):
             self._run("brisk")
 
     def test_omitted_rates_default_to_zero(self) -> None:

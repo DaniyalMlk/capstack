@@ -79,7 +79,7 @@ class TestDebtFunding:
 
     def test_an_issue_price_quoted_as_points_is_rejected(self) -> None:
         # 99 rather than 0.99 would silently inflate proceeds a hundredfold.
-        with pytest.raises(ValueError, match="0.99 rather than 99"):
+        with pytest.raises(ValueError, match=r"0\.99 rather than 99"):
             DebtFunding.of("Term Loan B", 400, issue_price=99)
 
     def test_zero_issue_price_is_rejected(self) -> None:

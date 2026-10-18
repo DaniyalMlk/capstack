@@ -40,7 +40,7 @@ class TestTargetBookBalanceSheet:
         assert TargetBookBalanceSheet.of(400, 520).book_equity == money(-120)
 
     def test_goodwill_cannot_exceed_the_asset_side(self) -> None:
-        with pytest.raises(BalanceSheetError, match="goodwill .* exceeds total assets"):
+        with pytest.raises(BalanceSheetError, match=r"goodwill .* exceeds total assets"):
             TargetBookBalanceSheet.of(100, 50, goodwill=120)
 
     @pytest.mark.parametrize(

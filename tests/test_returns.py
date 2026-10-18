@@ -146,7 +146,7 @@ class TestIRRRefusals:
         assert abs(roots[1] - 0.30) < 1e-9
 
     def test_the_ambiguity_message_names_both_rates(self) -> None:
-        with pytest.raises(AmbiguousIRRError, match="20.000000%"):
+        with pytest.raises(AmbiguousIRRError, match=r"20\.000000%"):
             irr_periodic(flows(-1000, 2500, -1560))
 
     def test_a_sign_change_that_is_only_a_zero_does_not_count(self) -> None:

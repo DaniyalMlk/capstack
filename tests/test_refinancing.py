@@ -416,7 +416,7 @@ class TestReadingTheEvent:
 
     def test_a_schedule_error_reaches_the_caller_as_a_spec_error(self) -> None:
         deal = parse_deal(deal_with(refinancings=[one(period=9)]))
-        with pytest.raises(DealSpecError, match="refinancings: .*beyond the 5 periods"):
+        with pytest.raises(DealSpecError, match=r"refinancings: .*beyond the 5 periods"):
             deal.schedule()
 
 
