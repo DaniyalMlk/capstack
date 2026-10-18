@@ -29,8 +29,8 @@ __all__ = [
     "PeriodGrid",
     "TrailingWindow",
     "add_months",
-    "trailing_window",
     "end_of_month",
+    "trailing_window",
 ]
 
 

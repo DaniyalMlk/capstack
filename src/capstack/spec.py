@@ -13,14 +13,13 @@ hundred million lands a few hundredths away from where it should.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from pathlib import Path
-from collections.abc import Iterator, Sequence
 from typing import Any
-
-from dataclasses import dataclass
 
 from .balance_sheet import OpeningBalanceSheet, PurchaseAccounting, TargetBookBalanceSheet
 from .covenants import Covenant, CovenantReport, Measure
@@ -34,7 +33,6 @@ from .debt import (
     TrancheKind,
 )
 from .drivers import Driver
-from .fees import FeeMethod, FeeSchedule
 from .events import (
     AddOn,
     AddOnError,
@@ -45,6 +43,7 @@ from .events import (
     Refinancing,
     RefinancingError,
 )
+from .fees import FeeMethod, FeeSchedule
 from .incentive import IncentiveError, OptionPool, Ratchet, Vesting
 from .money import ONE, ZERO, Money, money, safe_div
 from .operating import (

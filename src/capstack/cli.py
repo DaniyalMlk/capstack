@@ -10,18 +10,19 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Sequence
 from datetime import date
 from decimal import Decimal
-from typing import Any, Sequence
+from typing import Any
 
 from .covenants import CovenantObservation
 from .daycount import DayCount
+from .fees import FeeMethod
 from .money import quantize
 from .outcome import Outcome
 from .report import Report, prepare
 from .returns import AmbiguousIRR, CashFlow, CashFlowStream, IRRError
 from .sensitivity import Axis, Grid, Metric, SensitivityError, format_value
-from .fees import FeeMethod
 from .spec import Deal, DealSpecError, load_deal
 from .transaction import Transaction
 
@@ -45,7 +46,7 @@ def _parse_flow(token: str) -> CashFlow:
         raise argparse.ArgumentTypeError(f"not a date: {when_text!r}") from exc
     try:
         amount = Decimal(amount_text.strip().replace("_", "").replace(",", ""))
-    except Exception as exc:  # noqa: BLE001 - argparse wants one error type
+    except Exception as exc:
         raise argparse.ArgumentTypeError(f"not an amount: {amount_text!r}") from exc
     return CashFlow(when=when, amount=amount, label=label)
 

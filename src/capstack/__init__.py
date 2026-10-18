@@ -24,8 +24,8 @@ from .debt import (
     SweepGrid,
     SweepStep,
     Tranche,
-    TranchePeriod,
     TrancheKind,
+    TranchePeriod,
 )
 from .drivers import Driver
 from .events import (
@@ -70,18 +70,6 @@ from .outcome import (
     default_securities,
 )
 from .periods import Frequency, Period, PeriodGrid
-from .sensitivity import (
-    Axis,
-    Breakeven,
-    Case,
-    Cell,
-    Dimension,
-    Grid,
-    Metric,
-    SensitivityError,
-    Unit,
-    solve,
-)
 from .report import Report, Section
 from .returns import (
     AmbiguousIRR,
@@ -93,6 +81,18 @@ from .returns import (
     irr_periodic,
     moic,
     npv_periodic,
+)
+from .sensitivity import (
+    Axis,
+    Breakeven,
+    Case,
+    Cell,
+    Dimension,
+    Grid,
+    Metric,
+    SensitivityError,
+    Unit,
+    solve,
 )
 from .spec import (
     Deal,

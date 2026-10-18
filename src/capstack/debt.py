@@ -76,8 +76,8 @@ __all__ = [
     "SweepGrid",
     "SweepStep",
     "Tranche",
-    "TranchePeriod",
     "TrancheKind",
+    "TranchePeriod",
 ]
 
 

@@ -36,17 +36,17 @@ from .daycount import DayCount, year_fraction
 from .money import ZERO, Money, Numeric, money, to_float
 
 __all__ = [
+    "AmbiguousIRR",
     "CashFlow",
     "CashFlowStream",
+    "DidNotConverge",
     "IRRError",
     "NoSignChange",
-    "AmbiguousIRR",
-    "DidNotConverge",
     "brent_root",
-    "npv_periodic",
+    "cagr",
     "irr_periodic",
     "moic",
-    "cagr",
+    "npv_periodic",
 ]
 
 

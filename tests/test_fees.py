@@ -18,15 +18,14 @@ from capstack.cli import main
 from capstack.daycount import DayCount
 from capstack.debt import CapitalStructure, Tranche, TrancheKind
 from capstack.drivers import Driver
+from capstack.events import Refinancing, RefinancingError
 from capstack.fees import (
     FeeMethod,
-    FeePeriod,
     FeeSchedule,
     TrancheFees,
     contractual_profile,
     effective_rate,
 )
-from capstack.events import Draw, Refinancing, RefinancingError
 from capstack.money import ZERO, is_close, money
 from capstack.spec import DealSpecError, load_deal
 
