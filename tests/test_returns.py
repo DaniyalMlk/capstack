@@ -242,7 +242,7 @@ class TestCashFlowStream:
         dates = [date(2026, 1, 1), date(2027, 1, 1), date(2028, 1, 1), date(2029, 1, 1)]
         amounts = [-1000, 150, 150, 1150]
         stream = CashFlowStream.of(
-            list(zip(dates, amounts)), convention=DayCount.THIRTY_360_US
+            list(zip(dates, amounts, strict=True)), convention=DayCount.THIRTY_360_US
         )
         assert abs(stream.xirr() - irr_periodic(flows(*amounts))) < 1e-9
 
@@ -253,9 +253,9 @@ class TestCashFlowStream:
         # it is the reason the convention has to be stated.
         dates = [date(2026, 1, 1), date(2027, 1, 1), date(2028, 1, 1), date(2029, 1, 1)]
         amounts = [-1000, 150, 150, 1150]
-        actual = CashFlowStream.of(list(zip(dates, amounts))).xirr()
+        actual = CashFlowStream.of(list(zip(dates, amounts, strict=True))).xirr()
         thirty_360 = CashFlowStream.of(
-            list(zip(dates, amounts)), convention=DayCount.THIRTY_360_US
+            list(zip(dates, amounts, strict=True)), convention=DayCount.THIRTY_360_US
         ).xirr()
         assert actual < thirty_360
         assert 0.0001 < thirty_360 - actual < 0.0002

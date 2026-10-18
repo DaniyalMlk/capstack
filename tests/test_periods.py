@@ -1,3 +1,4 @@
+import itertools
 from datetime import date
 from decimal import Decimal
 
@@ -101,7 +102,7 @@ class TestPeriodGrid:
 
     def test_periods_are_contiguous(self) -> None:
         grid = PeriodGrid.build(date(2026, 1, 31), years=3, frequency=Frequency.QUARTERLY)
-        for earlier, later in zip(grid.periods, grid.periods[1:]):
+        for earlier, later in itertools.pairwise(grid.periods):
             assert later.start == earlier.end
 
     def test_indices_are_one_based_and_consecutive(self) -> None:

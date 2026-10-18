@@ -251,7 +251,7 @@ class TestTheSameCaseOnEveryFrequency:
         sub = by_year(case(frequency), line)
         annual = by_year(case(Frequency.ANNUAL), line)
         assert all(
-            is_close(a, b, tolerance=self.TOLERANCE) for a, b in zip(sub, annual)
+            is_close(a, b, tolerance=self.TOLERANCE) for a, b in zip(sub, annual, strict=True)
         )
 
     @pytest.mark.parametrize("frequency", SUB_ANNUAL)
@@ -261,7 +261,7 @@ class TestTheSameCaseOnEveryFrequency:
         sub = by_year(case(frequency), "capital_expenditure")
         annual = by_year(case(Frequency.ANNUAL), "capital_expenditure")
         assert all(
-            is_close(a, b, tolerance=self.TOLERANCE) for a, b in zip(sub, annual)
+            is_close(a, b, tolerance=self.TOLERANCE) for a, b in zip(sub, annual, strict=True)
         )
 
     @pytest.mark.parametrize("frequency", SUB_ANNUAL)
@@ -276,7 +276,7 @@ class TestTheSameCaseOnEveryFrequency:
 
         sub, annual = taxes(case(frequency)), taxes(case(Frequency.ANNUAL))
         assert all(
-            is_close(a, b, tolerance=self.TOLERANCE) for a, b in zip(sub, annual)
+            is_close(a, b, tolerance=self.TOLERANCE) for a, b in zip(sub, annual, strict=True)
         )
 
     @pytest.mark.parametrize("frequency", SUB_ANNUAL)
@@ -289,7 +289,7 @@ class TestTheSameCaseOnEveryFrequency:
         year_ends = [sub[i].net_working_capital for i in range(step - 1, len(sub), step)]
         assert all(
             is_close(a, b.net_working_capital, tolerance=self.TOLERANCE)
-            for a, b in zip(year_ends, annual)
+            for a, b in zip(year_ends, annual, strict=True)
         )
 
     @pytest.mark.parametrize("frequency", SUB_ANNUAL)
@@ -297,7 +297,7 @@ class TestTheSameCaseOnEveryFrequency:
         sub = by_year(case(frequency), "unlevered_free_cash_flow")
         annual = by_year(case(Frequency.ANNUAL), "unlevered_free_cash_flow")
         assert all(
-            is_close(a, b, tolerance=self.TOLERANCE) for a, b in zip(sub, annual)
+            is_close(a, b, tolerance=self.TOLERANCE) for a, b in zip(sub, annual, strict=True)
         )
 
     @pytest.mark.parametrize("frequency", FREQUENCIES)

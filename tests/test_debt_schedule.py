@@ -1,3 +1,4 @@
+import itertools
 import random
 from datetime import date
 from decimal import Decimal
@@ -619,7 +620,7 @@ class TestReconciliation:
             assert period.reconciles(), f"period {period.index}"
 
     def test_balances_chain_from_one_period_to_the_next(self, schedule: DebtSchedule) -> None:
-        for earlier, later in zip(schedule.periods, schedule.periods[1:]):
+        for earlier, later in itertools.pairwise(schedule.periods):
             assert later.opening_cash == earlier.closing_cash
             for row in later.tranches:
                 assert row.opening == earlier.tranche(row.name).closing

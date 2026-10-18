@@ -257,7 +257,7 @@ class TestTheOperatingCase:
             opening_revenue=400,
             acquisitions=[AcquiredStream.of(1, revenue=100, margin="0.2")],
         )
-        for base, combined in zip(plain, with_add_on):
+        for base, combined in zip(plain, with_add_on, strict=True):
             assert combined.organic_revenue == base.revenue
 
     def test_acquired_revenue_appears_only_from_the_period_after(self) -> None:
