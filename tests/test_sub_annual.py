@@ -228,6 +228,82 @@ class TestTheTrailingWindow:
             trailing_window([], 0)
 
 
+class TestWhatTheWorkingCapitalBalanceIsStruckAgainst:
+    """A stock over a year of sales, and which year of sales is the question.
+
+    Two annualisations of revenue are available at any column: the trailing
+    window's, which divides a year of trading by the year it covers, and the
+    period's own, which takes one column and grosses it up by its share of a
+    year. The model had both in scope and used the first; the second sat
+    unused until it was deleted, and nothing said which was intended.
+
+    It matters most exactly where the two differ. Under a growing case with
+    within-year weighting, a single quarter grossed up carries that quarter's
+    seasonality into a balance-sheet stock, so the balance jumps about with the
+    shape of the year; the trailing window does not. These pin the choice so
+    that the deleted alternative cannot come back as a quiet bug fix.
+    """
+
+    def test_the_balance_uses_a_year_of_sales_not_a_quarter_grossed_up(self) -> None:
+        model = case(Frequency.QUARTERLY)
+        rate = assumptions().nwc_rate
+        # Measured from the first column with a complete trailing year, since
+        # before that there is no year of sales to divide and the two
+        # annualisations are both incomplete.
+        step = model.periods_per_year
+        for position in range(step - 1, len(model.periods)):
+            row = model.periods[position]
+            own = row.revenue / row.period.share_of_year(DayCount.ACT_365F)
+            window = [
+                model.periods[k].revenue
+                for k in range(position - step + 1, position + 1)
+            ]
+            covered = sum(
+                (
+                    model.periods[k].period.share_of_year(DayCount.ACT_365F)
+                    for k in range(position - step + 1, position + 1)
+                ),
+                ZERO,
+            )
+            trailing = sum(window, ZERO) / covered
+            expected = trailing * rate.at(row.period.driver_index)
+            assert is_close(row.net_working_capital, expected, tolerance=Decimal("0.01"))
+            # And the alternative is a different number, so the assertion above
+            # is choosing between two live options rather than restating one.
+            if not is_close(own, trailing, tolerance=Decimal("0.01")):
+                alternative = own * rate.at(row.period.driver_index)
+                assert not is_close(
+                    row.net_working_capital, alternative, tolerance=Decimal("0.01")
+                )
+
+    def test_the_two_annualisations_really_do_differ_on_this_case(self) -> None:
+        """Otherwise the test above is vacuous.
+
+        A flat case with even within-year weights would make the period's own
+        gross-up and the trailing window the same number, and then nothing
+        above would be distinguishing anything.
+        """
+        model = case(Frequency.QUARTERLY)
+        step = model.periods_per_year
+        gaps = []
+        for position in range(step - 1, len(model.periods)):
+            row = model.periods[position]
+            own = row.revenue / row.period.share_of_year(DayCount.ACT_365F)
+            window = [
+                model.periods[k].revenue
+                for k in range(position - step + 1, position + 1)
+            ]
+            covered = sum(
+                (
+                    model.periods[k].period.share_of_year(DayCount.ACT_365F)
+                    for k in range(position - step + 1, position + 1)
+                ),
+                ZERO,
+            )
+            gaps.append(abs(own - sum(window, ZERO) / covered))
+        assert max(gaps) > ONE
+
+
 class TestTheSameCaseOnEveryFrequency:
     """The year-by-year equivalence, line by line.
 
