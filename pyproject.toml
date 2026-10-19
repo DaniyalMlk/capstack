@@ -1,25 +1,40 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "capstack"
+# The import name stays `capstack`; the distribution name cannot, because
+# `capstack` on the package index belongs to an unrelated library. The console
+# script below is aliased so that the distribution name resolves too.
+name = "capstack-lbo"
 version = "0.1.0"
 description = "A leveraged buyout engine: sources and uses, a debt waterfall with cash sweep, covenant tests, and returns attribution."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Daniyal" }]
 dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "mypy>=1.8", "ruff>=0.4"]
 
+[project.urls]
+Homepage = "https://github.com/DaniyalMlk/capstack"
+Repository = "https://github.com/DaniyalMlk/capstack"
+Issues = "https://github.com/DaniyalMlk/capstack/issues"
+
 [project.scripts]
 capstack = "capstack.cli:main"
+# So that `uvx capstack-lbo` resolves: a distribution whose only entry point is
+# named something else leaves the obvious invocation failing.
+capstack-lbo = "capstack.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+capstack = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
