@@ -57,7 +57,10 @@ addopts = "-q"
 [tool.mypy]
 python_version = "3.11"
 strict = true
-files = ["src", "tests"]
+# `examples` is in here because examples/evidence.py gates the front page:
+# a script that decides whether a release is honest should be held to the same
+# standard as the library it measures.
+files = ["src", "tests", "examples"]
 warn_unreachable = true
 disallow_any_explicit = false
 
