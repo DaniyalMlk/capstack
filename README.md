@@ -7,10 +7,9 @@ for, how the purchase is funded, what the operating case throws off, how the deb
 gets paid down, whether the covenants hold, and what the sponsor makes on the way
 out.
 
-Status: the engine is complete through phase eight, and phase nine — making the
-quarterly and monthly grids as trustworthy as the annual one — is complete but
-for its last item, which is running the checks on every push rather than by
-hand. What is there: the numerics (exact money, day counts, period grids,
+Every phase in `ROADMAP.md` is built, with the suite, the type checker and the
+linter running on every push. What is there: the numerics (exact money, day
+counts, period grids,
 the return measures), the transaction (entry valuation, a sources and uses table
 that balances, and the opening balance sheet after the recapitalisation), the
 operating case (drivers through to unlevered free cash flow), the capital
@@ -29,7 +28,81 @@ acquisition, which buys earnings during the hold and blends them into the entry
 multiple, and the refinancing, which retires a facility early and reports
 whether the lower coupon covered the premium. See [ROADMAP.md](ROADMAP.md).
 
+## What is checked, and against what
+
+An LBO model is easy to describe and hard to believe: every one of them claims
+to price a deal, schedule its debt and report a return, and the question a
+reader actually has is what any of it was checked against. So here is that,
+before the install line. Every figure is produced by `examples/evidence.py`,
+which runs in CI and exits non-zero if one of them moves:
+
+| Check | Result |
+| --- | --- |
+| The ambiguous-IRR stream against the quadratic's exact roots | 20.0% and 30.0%, within 1.5e-13 of 20% and 30% |
+| A two-flow return against the money multiple over the hold | 25.723629% a year, agreeing with m ** (1 / years) - 1 to 1.7e-16 |
+| Sources and uses on all 4 shipped deals | balanced by equality, worst gap 0, not within a tolerance |
+| The value-creation bridge against the change in equity value | worst unexplained residue 0 across 4 deals |
+| A sensitivity grid's base cell against the deal run on its own | 6 cells each a full rebuild, base cell out by 0 |
+
+The first two rows are the ones worth looking at twice, because they are the
+only two checked against something that shares no derivation with the engine.
+
+**The ambiguous stream is a quadratic.** A flow of -1,000 / +2,500 / -1,560
+gives `1000x² - 2500x + 1560 = 0` in `x = 1 + r`. Its discriminant is 10,000, a
+perfect square, so the roots are exactly 1.2 and 1.3 and the rates are exactly
+20% and 30% — not approximately, exactly. The solver knows nothing about
+quadratics: it scans the rate range for sign changes and refines every bracket
+it finds. Agreeing with the algebra to 1.5e-13 is therefore a statement about
+the solver rather than a restatement of it, and it is the check that makes
+"`capstack` reports *both* rates" mean something.
+
+**A two-flow return has a closed form.** One cheque out and one cheque in over
+a known hold is `m ** (1 / years) - 1`, by definition. A root finder that
+disagrees with that on two flows is wrong, whatever it does on twenty.
+
+The last three rows are zeros rather than small numbers, and the distinction is
+the point. A funding table out by a few thousand on a billion has not nearly
+balanced — it has a missing line item, and a tolerance would hide precisely the
+error the table exists to catch. The same goes for a bridge that nearly
+explains the change in equity value: the residue would be a component nobody
+had named. Both are asserted as equality, which is only possible because every
+amount here is a `Decimal` carried at full precision and never a float.
+
+The two rate figures are quoted as bounds rather than digits, deliberately.
+Where two implementations of the same rate stop agreeing is a fact about the
+floating-point unit underneath, so a figure quoted to sixteen places would be a
+number that happens to be true on the machine that measured it. The bound is
+the claim, and it is the bound the script enforces.
+
+```bash
+python examples/evidence.py     # all five, non-zero if a figure moves
+```
+
+Behind them: 1,540 tests on Python 3.11 through 3.13, with `mypy --strict` and
+`ruff` over the source, the tests and the gate above.
+
 ## Install
+
+```bash
+python -m pip install capstack-lbo
+```
+
+> **Not on the package index yet.** The `pip install` line above is what it
+> will be; until the first release lands, install from source:
+>
+> ```bash
+> python -m pip install "git+https://github.com/DaniyalMlk/capstack.git"
+> ```
+
+The distribution is `capstack-lbo` and the import is `capstack`. The two differ
+because `capstack` on the index is an unrelated library; the binary, the module
+and every identifier are unchanged, and `capstack-lbo` also works as a command
+so that `uvx capstack-lbo` resolves.
+
+Python 3.11 or newer. There are no dependencies — the engine imports only the
+standard library, so there is nothing else to resolve and nothing to compile.
+
+For a checkout:
 
 ```bash
 python -m pip install -e ".[dev]"
