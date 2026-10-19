@@ -44,6 +44,13 @@ jobs:
       # pyproject.toml and matches the sibling projects.
       - name: Lint
         run: ruff check .
+      # The front page's gate, as a step of its own as well as through the
+      # suite. The suite runs it inside a test so that a figure that moves
+      # fails on the commit that moved it; this step is here so that the
+      # failure reads as "the evidence moved" in the job list rather than as
+      # one test among fifteen hundred.
+      - name: The front page's figures still hold
+        run: python examples/evidence.py
 
   package:
     name: Wheel installs and runs
@@ -62,6 +69,24 @@ jobs:
           python -m venv /tmp/check
           /tmp/check/bin/pip install dist/*.whl
           /tmp/check/bin/python -c "import capstack; print(capstack.__version__)"
+          # The distribution name is not the import name here, so both console
+          # scripts are checked: `capstack-lbo` is what somebody who read the
+          # install line will type.
+          /tmp/check/bin/capstack --version
+          /tmp/check/bin/capstack-lbo --version
+          # py.typed has to be inside the installed package, not just in the
+          # source tree, or a consumer gets none of the annotations.
+          /tmp/check/bin/python - <<'PY'
+          import pathlib
+          import capstack
+          from importlib.metadata import metadata
+          marker = pathlib.Path(capstack.__file__).parent / "py.typed"
+          assert marker.is_file(), "py.typed did not reach the wheel"
+          fields = metadata("capstack-lbo")
+          assert fields["License-Expression"] == "MIT", fields["License-Expression"]
+          assert "LICENSE" in fields.get_all("License-File", []), "no licence in the wheel"
+          print("typed, licensed, installed")
+          PY
       # Every command's --help, against the artefact that would be installed.
       # argparse expands help strings through %-formatting at display time, so
       # a literal per cent sign raises TypeError there and nowhere else: a
