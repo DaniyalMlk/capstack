@@ -1,0 +1,115 @@
+name: release
+
+# Pushing a version tag is the whole trigger. There is no manual dispatch and no
+# branch trigger: a release is a tag, and anything that can publish without one
+# is a way to publish something nobody meant to.
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+
+# Read-only by default. The one job that needs a token to exist asks for it, and
+# asks for nothing else.
+permissions:
+  contents: read
+
+jobs:
+  # Everything that can fail is in this job, before anything leaves the runner.
+  # A distribution that cannot be installed is much easier to deal with as a red
+  # build than as a release that can never be replaced, because an index will
+  # not let a version be re-uploaded once it has been taken.
+  build:
+    name: build and prove the distributions install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # The tag is written by hand and the version is written in a file, so they
+      # can disagree, and the failure that follows is a release whose reported
+      # version is not the version anyone asked for. Checking first costs a
+      # second; the alternative cannot be undone.
+      - name: The tag and the declared version must agree
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+          import tomllib
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          with open("pyproject.toml", "rb") as handle:
+              declared = tomllib.load(handle)["project"]["version"]
+
+          if tag != f"v{declared}":
+              sys.exit(f"tag {tag} does not match the declared version {declared}")
+          print(f"tag {tag} matches the declared version {declared}")
+          PY
+
+      - name: Build the sdist and the wheel
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+
+      # twine's own reading of the metadata, which is stricter than the build
+      # backend's. It is the same check the index applies on upload, so failing
+      # it here is failing it in the only place a failure is still cheap.
+      - name: Check the metadata the index will read
+        run: python -m twine check --strict dist/*
+
+      # Both artefacts are installed, separately, with no source tree in reach.
+      # The wheel and the sdist are built by different code paths and a file
+      # missing from one can be present in the other, so checking one proves
+      # nothing about the other.
+      # Both artefacts are driven through a whole deal rather than imported.
+      # The memo runs every layer — the funding table, the operating case, the
+      # debt waterfall, the covenants and the exit — so a module missing from
+      # one artefact fails here rather than in somebody's build.
+      #
+      # Both console scripts are exercised, because the distribution name and
+      # the import name differ here and `capstack-lbo` is what a reader of the
+      # install line will type.
+      - name: The wheel installs into a clean environment and runs
+        run: |
+          python -m venv /tmp/from-wheel
+          /tmp/from-wheel/bin/pip install dist/*.whl
+          test "$(/tmp/from-wheel/bin/capstack --version)" = "capstack ${GITHUB_REF_NAME#v}"
+          test "$(/tmp/from-wheel/bin/capstack-lbo --version)" = "capstack ${GITHUB_REF_NAME#v}"
+          /tmp/from-wheel/bin/capstack report examples/meridian.json
+          /tmp/from-wheel/bin/capstack sensitivity examples/kestrel.json --rows exit-multiple:9,10,11 --columns leverage:4.0,4.5 --metric irr
+
+      - name: The sdist installs into a clean environment and runs
+        run: |
+          python -m venv /tmp/from-sdist
+          /tmp/from-sdist/bin/pip install dist/*.tar.gz
+          test "$(/tmp/from-sdist/bin/capstack --version)" = "capstack ${GITHUB_REF_NAME#v}"
+          test "$(/tmp/from-sdist/bin/capstack-lbo --version)" = "capstack ${GITHUB_REF_NAME#v}"
+          /tmp/from-sdist/bin/capstack report examples/meridian.json
+          /tmp/from-sdist/bin/capstack sensitivity examples/kestrel.json --rows exit-multiple:9,10,11 --columns leverage:4.0,4.5 --metric irr
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+
+  # Split from the build so that the job holding the publishing identity does
+  # nothing but publish: it checks out no code and runs no project code, so
+  # there is nothing in it that could reach the token it is given.
+  publish:
+    name: publish to the package index
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      # The short-lived OpenID Connect token the index exchanges for an upload
+      # token. This is the whole point of trusted publishing: no API token is
+      # stored in this repository, in these workflows, or anywhere else.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1

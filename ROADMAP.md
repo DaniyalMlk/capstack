@@ -111,8 +111,9 @@ monthly ones, and two things stop them being trustworthy on a leveraged deal.
       of them or the paper matured a year and a half early. A date can now be
       stated in years and resolved against the grid, and an assumption series is
       expanded over the years of the case rather than over its columns
-- [ ] Automated checks on every push. The suite and the type checker are run by
-      hand, which is enough for one pair of eyes and not enough for two
+- [x] Automated checks on every push. The suite and the type checker are run by
+      hand, which is enough for one pair of eyes and not enough for two —
+      settled in phase 10, where the workflow landed
 
 ## Phase 10 — The work runs somewhere other than one machine
 
@@ -130,11 +131,13 @@ monthly ones, and two things stop them being trustworthy on a leveraged deal.
       a whole deal — the waterfall, the covenant tests, the exit and the memo
       — rather than only imported
 - [x] The help sweep run against that installed wheel
-- [ ] Lint: `ruff check` under the configuration the sibling projects use
-      reports 69 findings, led by 21 `zip` calls with no explicit `strict=`
+- [x] Lint: `ruff check` under the configuration the sibling projects use
+      reported 69 findings, led by 21 `zip` calls with no explicit `strict=`
       and 12 long lines. Worth its own pass rather than a drive-by, since one
-      of them (`RUF032`, a `Decimal` built from a float literal) may be a
-      defect rather than a style point.
+      of them (`RUF032`, a `Decimal` built from a float literal) might have
+      been a defect rather than a style point — cleared in phase 11, where it
+      turned out to be the one finding worth keeping and is now exempted at
+      the line with the reason.
 
 ## Phase 11 — The linter runs, and the backlog behind it is gone
 
@@ -160,3 +163,61 @@ monthly ones, and two things stop them being trustworthy on a leveraged deal.
       otherwise the first would distinguish nothing
 - [x] The lint step added to CI only once the tree was green, because a lint
       step on a red tree is a step somebody turns off
+
+## Phase 12 — Installable, and a front page a reader can check
+
+- [x] An SPDX licence expression with `license-files`, so the terms reach the
+      artefact and not only the repository — the `license = {text = "MIT"}`
+      table it replaced had no equivalent, and the repository had no licence
+      file at all, so every wheel this project could have built claimed MIT
+      and shipped none of it
+- [x] `py.typed` inside the package, since the annotations were there and
+      nothing downstream was allowed to read them: in a checkout a type
+      checker reads them off the files and everything looks fine, while a
+      consumer who installed the package gets none
+- [x] `--version`, read off `__version__` rather than restated, so the two
+      cannot disagree
+- [x] A distribution name that is not the import name, because `capstack` on
+      the index is an unrelated library. It publishes as `capstack-lbo` with
+      the import name, the binary and every identifier unchanged, and a
+      console-script alias so that invoking the distribution name resolves
+      rather than failing
+- [x] Metadata tests over the things that break an install rather than a
+      calculation: the version agreeing between the attribute, the installed
+      distribution and `pyproject.toml` in the checkout — the last because an
+      editable install's metadata is a snapshot and the first two agree on a
+      tree that has already moved on
+- [x] The split name asserted in both directions, since renaming the
+      distribution back would fail an upload against a project nobody here
+      owns, which is a confusing thing to debug from a build log
+- [x] Both artefacts built, passed `twine check --strict`, installed into
+      clean environments and driven through a whole memo — two code paths, so
+      checking one proves nothing about the other
+- [x] A tag-driven release holding `id-token: write` and nothing else, split
+      from the build so the job with the publishing identity checks out no
+      code and runs none of this project's; the tag checked against the
+      declared version first, because an index will not let a version be
+      re-uploaded once it has been taken
+- [x] A front page that opens with what was checked and against what, with
+      the two closed-form rows first: the ambiguous-IRR stream is a quadratic
+      whose discriminant is a perfect square, so its roots are exactly 20% and
+      30% and the solver — which scans for sign changes and knows nothing
+      about quadratics — agreeing to 1.5e-13 is a statement about the solver
+- [x] The other three rows asserted as equality rather than as a tolerance,
+      because a funding table out by a few thousand on a billion has a missing
+      line item and a tolerance would hide exactly the error the table exists
+      to catch
+- [x] The grid's axes built around the file's own values, so the base cell
+      exists by construction: a first draft used 9/10/11 against a deal struck
+      at 9.75 and found no base cell to compare
+- [x] The figures pinned from the document's side as well, so a deleted row
+      fails and not only a moved number, with the whole rendered row checked
+      rather than the label and the value separately
+- [x] The value direction deliberately not scanned, since looking for a number
+      in the document cannot tell which number it found and two figures in a
+      table of five can be close enough to pass against the wrong one
+- [x] `examples` inside the mypy scope, since a script that decides whether a
+      release is honest should be held to the standard of the library it
+      measures
+- [ ] A first release on the index, which waits on the publisher being
+      registered there for this project

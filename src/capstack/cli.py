@@ -15,6 +15,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
+from . import __version__
 from .covenants import CovenantObservation
 from .daycount import DayCount
 from .fees import FeeMethod
@@ -1571,6 +1572,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="capstack",
         description="A leveraged buyout engine.",
+    )
+    # An installed copy has to be able to say what it is. Read off the package
+    # rather than restated here, so the two cannot disagree.
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"capstack {__version__}",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
