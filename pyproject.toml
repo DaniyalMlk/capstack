@@ -14,6 +14,20 @@ requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Daniyal" }]
+keywords = ["lbo", "leveraged-buyout", "private-equity", "finance", "debt-schedule", "irr"]
+# `Typing :: Typed` is a promise to type checkers that py.typed keeps. Nothing
+# connects the two but tests/test_metadata.py.
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Typing :: Typed",
+]
 dependencies = []
 
 [project.optional-dependencies]
