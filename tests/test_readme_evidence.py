@@ -60,6 +60,8 @@ QUOTED = (
     "at most 5 passes, worst residual 5.9e-5, and re-running each schedule on the settled "
     "cash flows moves its interest by 0",
     "all deduct 380.16 and pay 158.40 - spread 0, while the debt they leave spans 615.22",
+    "90 to 189 basis points of return, and the equity gains 1.09 to 1.15 times the cash "
+    "tax saved rather than once",
 )
 
 #: Row labels from the evidence table. Presence is what is checked, not the
@@ -73,6 +75,7 @@ ROWS = (
     "A sensitivity grid's base cell against the deal run on its own",
     "The interest deduction settled against the debt it is charged on, 4 shipped deals",
     "The deduction past saturation, 4 structures from 6.0x to 8.0x",
+    "What the deduction is worth, 4 shipped deals",
 )
 
 

@@ -50,6 +50,7 @@ from .operating import OperatingAssumptions, OperatingModel
 from .outcome import Outcome
 from .periods import PeriodGrid
 from .spec import Deal
+from .tax import LeveredSolution
 
 __all__ = [
     "Axis",
@@ -377,18 +378,31 @@ class Case:
     schedule: DebtSchedule
     outcome: Outcome
     covenants: CovenantReport | None
+    #: The settled solve, where the case was run on a levered tax basis.
+    #: ``None`` on the default basis, where there is nothing to settle.
+    levered: LeveredSolution | None = None
 
     @classmethod
-    def run(cls, deal: Deal) -> Case:
+    def run(cls, deal: Deal, *, levered: bool = False) -> Case:
         """Run every layer once.
 
         The case and the schedule are computed here and handed down rather than
         recomputed by each caller. The schedule solves a fixed point, and a grid
         that solved it twice per cell would take twice as long to say the same
         thing.
+
+        ``levered`` chooses which tax basis the structure is serviced out of.
+        The default taxes EBIT and services the debt out of unlevered free cash
+        flow, which is the convention the engine has always used and the one
+        every figure in the repository is struck on. Asking for the other
+        settles the interest deduction against the debt it is charged on, which
+        on the shipped deals is worth between 90 and 189 basis points of return
+        — so this is a choice about what the model means, not a refinement, and
+        it is made explicitly rather than by default.
         """
         model = deal.project()
-        schedule = deal.schedule(model)
+        solution = deal.levered(model) if levered else None
+        schedule = deal.schedule(model) if solution is None else solution.schedule
         outcome = deal.realise(model, schedule)
         covenants = (
             deal.test_covenants(model, schedule) if deal.has_covenants else None
@@ -399,6 +413,7 @@ class Case:
             schedule=schedule,
             outcome=outcome,
             covenants=covenants,
+            levered=solution,
         )
 
     @property

@@ -296,3 +296,30 @@ monthly ones, and two things stop them being trustworthy on a leveraged deal.
 - [x] Two of the front page's rows carrying it, both gated: the settled solve
       across the shipped deals, and the saturation equality with the spread of
       the debt beside it, so the equality is not vacuous
+
+## Phase 14 — The returns reflect the tax the structure pays
+
+- [x] A case runnable on either tax basis, with the settled solve kept on it
+      so a metric or a grid can read the tax as well as the schedule
+- [x] The basis opt-in rather than the new default, because flipping it would
+      move every reported return in the repository including the worked
+      example's hand-computed figures, and which convention a model runs under
+      is a modelling decision rather than a defect
+- [x] The regression guard parametrised over every shipped deal and asserted
+      against `deal.schedule` itself rather than against recorded figures, so
+      it stays true as the engine changes
+- [x] The saving stated in the unit the question is asked in: 90 to 189 basis
+      points of return across the shipped deals, measured by the gate
+- [x] The finding behind that figure, which arrived as a failing test. It
+      asserted the obvious thing — that the equity gains exactly the cash tax
+      the structure saved — and the equity gains more, 1.09 to 1.15 times it.
+      The saved cash is swept against the debt, and debt repaid early does not
+      accrue the interest it would otherwise have accrued, so the equity
+      collects the saving and the interest the saving avoided
+- [x] The identity that does hold asserted alongside it: the gain is the debt
+      the business no longer owes plus the cash it is holding, since the basis
+      moves neither the exit multiple nor the EBITDA it is struck on
+- [x] Reachable from the command line, saying which basis it ran on rather
+      than quietly running one, with the flag's help carrying what it is worth
+- [ ] Whether the levered basis should become the default, which moves every
+      reported figure in the repository and is a decision rather than a task

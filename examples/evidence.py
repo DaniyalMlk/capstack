@@ -108,6 +108,11 @@ class Figures:
     saturated_cash_tax: Decimal
     saturated_deduction_spread: Decimal
     saturated_debt_spread: Decimal
+    return_deals: int
+    return_gain_low: float
+    return_gain_high: float
+    return_uplift_low: Decimal
+    return_uplift_high: Decimal
 
 
 def _ambiguous() -> tuple[tuple[float, ...], float]:
@@ -336,12 +341,47 @@ def _settled() -> tuple[int, int, Decimal, Decimal]:
     return len(files), worst_passes, worst_residual, worst_interest_gap
 
 
+def _return_impact() -> tuple[int, float, float, Decimal, Decimal]:
+    """What the deduction is worth, in the unit the question is asked in.
+
+    Two figures per deal. The gain in basis points of return is the headline.
+    The uplift is the finding behind it: the equity gains *more* than the cash
+    tax the structure saved, because the saved cash is swept against the debt
+    and debt repaid early does not accrue the interest it would have accrued.
+    So the equity collects the saving and the interest the saving avoided.
+    """
+    files = sorted(EXAMPLES.glob("*.json"))
+    gains: list[float] = []
+    uplifts: list[Decimal] = []
+
+    for path in files:
+        deal = load_deal(path)
+        plain = Case.run(deal)
+        settled = Case.run(load_deal(path), levered=True)
+        before, after = plain.outcome.irr, settled.outcome.irr
+        if before is None or after is None:  # pragma: no cover - every deal exits
+            raise SystemExit(f"{path.name} reports no rate of return")
+        gains.append((after - before) * 10_000)
+
+        assert settled.levered is not None
+        saved = settled.levered.total_shield
+        gained = Decimal(
+            settled.outcome.valuation.equity_value - plain.outcome.valuation.equity_value
+        )
+        if saved <= 0:  # pragma: no cover - every shipped deal is levered
+            raise SystemExit(f"{path.name} saved no tax, so there is nothing to measure")
+        uplifts.append(gained / Decimal(saved))
+
+    return len(files), min(gains), max(gains), min(uplifts), max(uplifts)
+
+
 def measure() -> Figures:
     roots, ambiguous_worst = _ambiguous()
     found, closed, two_flow_error = _two_flow()
     deals, funding_worst, bridge_worst, cells, grid_gap = _deal_identities()
     solve_deals, passes, residual, interest_gap = _settled()
     cases, deduction, cash_tax, deduction_spread, debt_spread = _saturation()
+    return_deals, gain_low, gain_high, uplift_low, uplift_high = _return_impact()
     return Figures(
         ambiguous_roots=roots,
         ambiguous_worst_error=ambiguous_worst,
@@ -362,6 +402,11 @@ def measure() -> Figures:
         saturated_cash_tax=cash_tax,
         saturated_deduction_spread=deduction_spread,
         saturated_debt_spread=debt_spread,
+        return_deals=return_deals,
+        return_gain_low=gain_low,
+        return_gain_high=gain_high,
+        return_uplift_low=uplift_low,
+        return_uplift_high=uplift_high,
     )
 
 
@@ -425,6 +470,21 @@ def check(figures: Figures) -> None:
         )
     if figures.saturated_cases != len(SATURATED_TURNS):
         raise SystemExit(f"only {figures.saturated_cases} saturated structures checked")
+    # The deduction is worth a material amount of return or the convention is
+    # not worth offering. A band, because the figure is a property of each
+    # file's leverage and coupon rather than of the engine.
+    if not 50.0 <= figures.return_gain_low <= figures.return_gain_high <= 300.0:
+        raise SystemExit(
+            f"the deduction moved returns by {figures.return_gain_low:.1f} to "
+            f"{figures.return_gain_high:.1f}bp, outside the band the README states"
+        )
+    # And the equity gains more than the saving, which is the finding. An
+    # uplift at or below one would mean the swept cash earned nothing.
+    if figures.return_uplift_low <= 1:
+        raise SystemExit(
+            f"the equity gained only {figures.return_uplift_low} times the saving, "
+            "so the interest the repayment avoided has gone missing"
+        )
 
 
 def _exact(amount: Decimal) -> str:
@@ -482,6 +542,13 @@ def rows(figures: Figures) -> tuple[tuple[str, str], ...]:
             f"{_exact(figures.saturated_deduction_spread)}, while the debt they leave "
             f"spans {figures.saturated_debt_spread:.2f}",
         ),
+        (
+            f"What the deduction is worth, {figures.return_deals} shipped deals",
+            f"{figures.return_gain_low:.0f} to {figures.return_gain_high:.0f} basis "
+            f"points of return, and the equity gains "
+            f"{figures.return_uplift_low:.2f} to {figures.return_uplift_high:.2f} times "
+            f"the cash tax saved rather than once",
+        ),
     )
 
 
@@ -515,6 +582,11 @@ def report(figures: Figures | None = None) -> str:
         f"{measured.saturated_deduction}, pay {measured.saturated_cash_tax}, "
         f"spread {_exact(measured.saturated_deduction_spread)}, debt spread "
         f"{measured.saturated_debt_spread}"
+    )
+    lines.append(
+        f"   return impact on {measured.return_deals} deals: "
+        f"{measured.return_gain_low:.2f} to {measured.return_gain_high:.2f}bp, "
+        f"equity uplift {measured.return_uplift_low} to {measured.return_uplift_high}"
     )
     lines.append(
         f"   grid: {measured.grid_cells} cells, base cell gap "
