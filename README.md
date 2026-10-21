@@ -120,7 +120,7 @@ the claim, and it is the bound the script enforces.
 python examples/evidence.py     # all eight, non-zero if a figure moves
 ```
 
-Behind them: 1,698 tests on Python 3.11 through 3.13, with `mypy --strict` and
+Behind them: 1,719 tests on Python 3.11 through 3.13, with `mypy --strict` and
 `ruff` over the source, the tests and the gate above.
 
 ## Install

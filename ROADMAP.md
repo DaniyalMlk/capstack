@@ -323,3 +323,29 @@ monthly ones, and two things stop them being trustworthy on a leveraged deal.
       than quietly running one, with the flag's help carrying what it is worth
 - [ ] Whether the levered basis should become the default, which moves every
       reported figure in the repository and is a decision rather than a task
+
+## Phase 15 — The cap as a surface
+
+- [x] A grid runnable on either tax basis, passed down to every cell, since a
+      grid is what a deal is actually priced off and the basis moves it by more
+      than the width of most of the bands such a table is read for
+- [x] The cap on an axis, as a level rather than a shift, so a surface can be
+      drawn over leverage and the cap together
+- [x] Cells able to report the cash tax and the saving, both guarded the way
+      the covenant cushion is already guarded: refused up front with a message
+      naming what to do, because on the unlevered basis the saving is zero by
+      construction and the grid would be a table of identical excuses
+- [x] Saturation visible as a shape rather than inferred from two numbers. At
+      a cap tight enough to bind everywhere the saving column is identical from
+      four turns to eight — to the last digit, on exact arithmetic — and at a
+      loose cap it rises throughout. At the regime's own rate the column rises
+      and then flattens, which locates the saturation point
+- [x] The second exact relation that falls out of it: a saturated deduction is
+      the sum of rate times earnings, so the saving is exactly proportional to
+      the cap. Doubling the cap doubles the saving with no remainder
+- [x] The flatness checked against its own opposite, since a column that does
+      not move might be a grid ignoring its row axis rather than a finding
+- [x] Reading the cap off a file that caps nothing refused rather than given an
+      invented centre, while flexing a deal *onto* a cap is allowed, because
+      what a cap would cost a structure underwritten without one is the
+      question most worth asking of it
