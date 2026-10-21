@@ -1275,6 +1275,157 @@ def _cmd_exit(args: argparse.Namespace) -> int:
     return 0
 
 
+_TAX_ROWS: tuple[tuple[str, str], ...] = (
+    ("EBITDA", "ebitda"),
+    ("EBIT", "ebit"),
+    ("Interest arising", "interest_arising"),
+    ("Brought forward", "interest_carried_in"),
+    ("Deduction allowance", "allowance"),
+    ("Interest deducted", "interest_deducted"),
+    ("Disallowed, carried", "interest_carried_out"),
+    ("Taxable income", "taxable_income"),
+    ("Loss relief used", "loss_relief_used"),
+    ("Cash tax", "cash_tax"),
+    ("Tax if unlevered", "cash_tax_unlevered"),
+    ("Saving", "shield"),
+)
+
+#: Rows shown as an outflow so the column reads down the page.
+_NEGATED_TAX_ROWS = frozenset({"Interest deducted", "Loss relief used", "Cash tax"})
+
+_RULED_TAX_ROWS = frozenset({"EBIT", "Disallowed, carried", "Cash tax"})
+
+
+def _tax_report(deal: Deal) -> dict[str, Any]:
+    solution = deal.levered()
+    limit = deal.interest_limit
+    return {
+        "name": deal.name,
+        "limit": (
+            None
+            if limit is None
+            else {"rate": float(limit.rate), "base": limit.base.value}
+        ),
+        "iterations": solution.iterations,
+        "residual": _amount_str(solution.residual),
+        "periods": [
+            {
+                "index": row.index,
+                "ending": period.period.end.isoformat(),
+                "ebitda": _amount_str(row.ebitda),
+                "ebit": _amount_str(row.ebit),
+                "interest_arising": _amount_str(row.deduction.arising),
+                "interest_carried_in": _amount_str(row.deduction.carried_in),
+                "allowance": (
+                    "" if row.deduction.allowance is None else _amount_str(row.deduction.allowance)
+                ),
+                "interest_deducted": _amount_str(row.deduction.deductible),
+                "interest_carried_out": _amount_str(row.deduction.carried_out),
+                "taxable_income": _amount_str(row.taxable_income),
+                "loss_relief_used": _amount_str(row.loss_relief_used),
+                "cash_tax": _amount_str(row.cash_tax),
+                "cash_tax_unlevered": _amount_str(row.cash_tax_unlevered),
+                "shield": _amount_str(row.shield),
+                "binding": row.deduction.binding,
+            }
+            for row, period in zip(solution.tax, deal.project(), strict=True)
+        ],
+        "totals": {
+            "interest_arising": _amount_str(solution.tax.total_interest_arising),
+            "interest_deducted": _amount_str(solution.tax.total_interest_deducted),
+            "closing_disallowed_interest": _amount_str(
+                solution.tax.closing_disallowed_interest
+            ),
+            "deducted_share": float(solution.tax.deducted_share),
+            "cash_tax": _amount_str(solution.tax.total_cash_tax),
+            "cash_tax_unlevered": _amount_str(solution.tax.total_cash_tax_unlevered),
+            "shield": _amount_str(solution.total_shield),
+            "binding_periods": list(solution.tax.binding_periods),
+        },
+    }
+
+
+def _print_tax(report: dict[str, Any]) -> None:
+    periods = report["periods"]
+    header = f"{report['name']} - tax on the financed business"
+    print(header)
+    print("=" * len(header))
+    print()
+
+    limit = report["limit"]
+    if limit is None:
+        print("  Deduction uncapped")
+    else:
+        # Trailing zeros stripped by hand rather than with normalize(), which
+        # turns 30.00 into 3E+1 and would print the cap in scientific notation.
+        # The rate is carried as a rate rather than through _amount_str, which
+        # rounds to cent scale and would report a 7.5% cap as 8%.
+        rate = (
+            format(Decimal(str(limit["rate"])) * 100, "f").rstrip("0").rstrip(".") or "0"
+        )
+        print(f"  Deduction capped at {rate}% of {limit['base'].upper()}")
+    print(f"  Settled in {report['iterations']} passes, residual {Decimal(report['residual']):.2e}")
+    print()
+
+    label_width = max(len(label) for label, _ in _TAX_ROWS) + 2
+    cells_all = [p[key] for p in periods for _, key in _TAX_ROWS if p[key] != ""]
+    widest = max((len(_format_money(Decimal(c))) for c in cells_all), default=7)
+    column = max(widest, 7) + 2
+
+    def row(label: str, cells: list[str]) -> str:
+        return "  " + label.ljust(label_width) + "".join(c.rjust(column) for c in cells)
+
+    print(row("", [_column(p["index"]) for p in periods]))
+    print(row("", [p["ending"][:7] for p in periods]))
+    print("  " + "-" * (label_width + column * len(periods)))
+
+    for label, key in _TAX_ROWS:
+        cells = []
+        for p in periods:
+            raw = p[key]
+            if raw == "":
+                cells.append("-")
+                continue
+            value = Decimal(raw)
+            if label in _NEGATED_TAX_ROWS:
+                value = -value
+            cells.append(_format_money(value))
+        print(row(label, cells))
+        if label in _RULED_TAX_ROWS:
+            print()
+
+    totals = report["totals"]
+    print("  " + "-" * (label_width + column * len(periods)))
+    print(f"  Interest arising over the hold {_format_money(Decimal(totals['interest_arising']))}")
+    print(f"  Of which deducted              {_format_money(Decimal(totals['interest_deducted']))}")
+    share = totals["deducted_share"] * 100
+    print(f"  Deducted share                 {share:>13.2f}%")
+    if Decimal(totals["closing_disallowed_interest"]) > 0:
+        print(
+            "  Still disallowed at exit       "
+            f"{_format_money(Decimal(totals['closing_disallowed_interest']))}"
+        )
+    print(f"  Cash tax paid                  {_format_money(Decimal(totals['cash_tax']))}")
+    print(
+        "  Cash tax if unlevered          "
+        f"{_format_money(Decimal(totals['cash_tax_unlevered']))}"
+    )
+    print(f"  Saved by the deduction         {_format_money(Decimal(totals['shield']))}")
+    if totals["binding_periods"]:
+        periods_hit = ", ".join(_column(i) for i in totals["binding_periods"])
+        print(f"  Cap bound in                   {periods_hit}")
+
+
+def _cmd_tax(args: argparse.Namespace) -> int:
+    deal = load_deal(args.file)
+    report = _tax_report(deal)
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        _print_tax(report)
+    return 0
+
+
 def _cmd_project(args: argparse.Namespace) -> int:
     deal = load_deal(args.file)
     report = _projection_report(deal)
@@ -1641,6 +1792,20 @@ def build_parser() -> argparse.ArgumentParser:
     project.add_argument("file", help="path to a deal file (JSON)")
     project.add_argument("--json", action="store_true", help="emit JSON instead of a table")
     project.set_defaults(handler=_cmd_project)
+
+    tax = sub.add_parser(
+        "tax",
+        help="cash tax on the financed business: the deduction, its cap, and its pool",
+        description=(
+            "Settle the interest deduction against the debt it is charged on and "
+            "print what the structure actually pays. The operating case taxes "
+            "EBIT, which is unlevered on purpose; this closes the loop between "
+            "the deduction, the cash it frees, and the debt that cash repays."
+        ),
+    )
+    tax.add_argument("file", help="path to a deal file (JSON)")
+    tax.add_argument("--json", action="store_true", help="emit JSON instead of a table")
+    tax.set_defaults(handler=_cmd_tax)
 
     schedule = sub.add_parser(
         "schedule",

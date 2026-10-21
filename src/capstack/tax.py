@@ -52,26 +52,44 @@ or the other.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from enum import Enum
 
+from .debt import CapitalStructure, DebtSchedule
 from .money import ZERO, Money, Numeric, money, safe_div
-from .operating import DEFAULT_NOL_USAGE_LIMIT, OperatingModel
+from .operating import DEFAULT_NOL_USAGE_LIMIT, OperatingAssumptions, OperatingModel
 
 __all__ = [
     "DEFAULT_INTEREST_LIMIT_RATE",
+    "DEFAULT_SOLVE_TOLERANCE",
     "EarningsBase",
     "InterestDeduction",
     "InterestLimit",
+    "LeveredSolution",
     "LeveredTaxPeriod",
     "LeveredTaxSchedule",
+    "ScheduleRunner",
+    "TaxCircularityError",
     "TaxPolicy",
     "TaxPolicyError",
+    "levered_schedule",
     "levered_tax",
     "levered_tax_for_model",
     "levered_tax_schedule",
+    "solve_levered",
 ]
+
+#: How close two successive saving series must be for the solve to stop. The
+#: quantity is money, so the default is a hundredth of a currency unit's
+#: hundredth: far below anything a deal file expresses and far above the
+#: precision the arithmetic carries.
+DEFAULT_SOLVE_TOLERANCE = money("0.0001")
+
+#: The maximum number of schedule runs a solve will make before giving up. The
+#: measured worst case across the structures in the suite is well inside this;
+#: see :func:`solve_levered`.
+MAX_SOLVE_ITERATIONS = 100
 
 #: The share of earnings a net interest deduction is commonly limited to. Thirty
 #: per cent is the figure in the regime most leveraged deals are now struck
@@ -81,6 +99,17 @@ DEFAULT_INTEREST_LIMIT_RATE = money("0.30")
 
 class TaxPolicyError(ValueError):
     """A tax policy that cannot be applied as written."""
+
+
+class TaxCircularityError(RuntimeError):
+    """The deduction and the debt it is charged on did not settle.
+
+    Distinct from :class:`~capstack.debt.CircularityError`, which is the inner
+    fixed point between a period's balance and the interest accrued on it. This
+    is the outer one, between the whole hold's tax and the whole hold's debt,
+    and a structure can solve the inner one in every period and still fail
+    here.
+    """
 
 
 class EarningsBase(Enum):
@@ -151,6 +180,29 @@ class TaxPolicy:
     #: incurred, and the common regimes deduct it on that basis; a regime that
     #: waits for the cash sets this to ``False`` and defers it to the pool.
     deduct_accrued_interest: bool = True
+
+    @classmethod
+    def from_assumptions(
+        cls,
+        assumptions: OperatingAssumptions,
+        *,
+        interest_limit: InterestLimit | None = None,
+        deduct_accrued_interest: bool = True,
+    ) -> TaxPolicy:
+        """Take the rate and the loss limit from the operating case itself.
+
+        The usual way to build a policy, and the safe one. The saving a solve
+        credits to the cash flow is measured against the operating case's own
+        tax line, so a policy whose rate disagrees with that case measures the
+        saving off the wrong base. Reading both off the assumptions makes the
+        disagreement impossible rather than merely detectable.
+        """
+        return cls(
+            rate=assumptions.tax_rate,
+            nol_usage_limit=assumptions.nol_usage_limit,
+            interest_limit=interest_limit,
+            deduct_accrued_interest=deduct_accrued_interest,
+        )
 
     @classmethod
     def of(
@@ -304,9 +356,17 @@ class LeveredTaxSchedule:
     def total_shield(self) -> Money:
         """Cash tax the structure saved over the hold.
 
-        The difference of two totals rather than a sum of per-period
-        differences, which is the same figure here and is the one a cash flow
-        can be reconciled against.
+        The difference of two totals, not the sum of the per-period
+        differences. The two are equal in exact arithmetic and are not quite
+        equal here: five roundings of a period difference against two roundings
+        of a total, in a context carrying 34 digits, leave the two orderings
+        disagreeing in the last places — measured at 7e-32 on the reference
+        case. Which is nothing, but it is not zero, and a reader reconciling
+        this against a cash flow should know which ordering produced it.
+
+        This ordering is the one chosen because it is the one that ties: both
+        totals are figures the model reports elsewhere, so the saving can be
+        checked against two numbers a reader already has.
         """
         return self.total_cash_tax_unlevered - self.total_cash_tax
 
@@ -577,4 +637,198 @@ def levered_tax_for_model(
         policy=policy,
         opening_carryforward=opening_carryforward,
         opening_disallowed_interest=opening_disallowed_interest,
+    )
+
+
+# -- The circularity -----------------------------------------------------
+
+#: A function that runs the capital structure against a cash-flow series.
+#:
+#: The solve varies the cash flow and reads back the interest, and has no other
+#: business with the schedule. Taking a runner rather than a structure is what
+#: keeps recapitalisations, add-ons, refinancings and fee write-offs out of this
+#: layer: the caller configures them once, closes over them, and the fixed point
+#: never learns they exist.
+ScheduleRunner = Callable[[Sequence[Money]], DebtSchedule]
+
+
+@dataclass(frozen=True, slots=True)
+class LeveredSolution:
+    """A capital structure and a tax computation that agree with each other."""
+
+    schedule: DebtSchedule
+    tax: LeveredTaxSchedule
+    #: The cash flow the schedule was finally run against: the operating case's
+    #: unlevered free cash flow plus the saving the deduction produced.
+    cash_flows: tuple[Money, ...]
+    #: How many times the schedule was run, the first pass included.
+    iterations: int
+    #: The largest period-on-period movement in the saving when the solve
+    #: stopped. Reported rather than discarded, because a caller comparing two
+    #: structures to a hundredth of a turn should be able to see it.
+    residual: Money
+
+    @property
+    def total_shield(self) -> Money:
+        """Cash tax the structure saved, net of the debt the saving repaid."""
+        return self.tax.total_shield
+
+    @property
+    def shields(self) -> tuple[Money, ...]:
+        return tuple(p.shield for p in self.tax)
+
+
+def _shield_series(model: OperatingModel, tax: LeveredTaxSchedule) -> list[Money]:
+    """The saving per period, measured against the operating case's own tax line.
+
+    Not against the tax layer's internal counterfactual. The two agree — that
+    is checked before the solve starts — but the unlevered free cash flow the
+    saving is added to was struck net of the *model's* figure, so the model's
+    figure is the one the adjustment has to be measured from or the cash flow
+    double-counts the difference between them.
+    """
+    return [period.tax.cash_tax - row.cash_tax for period, row in zip(model, tax, strict=True)]
+
+
+def solve_levered(
+    *,
+    model: OperatingModel,
+    run: ScheduleRunner,
+    policy: TaxPolicy,
+    opening_carryforward: Numeric = 0,
+    opening_disallowed_interest: Numeric = 0,
+    tolerance: Numeric = DEFAULT_SOLVE_TOLERANCE,
+    max_iterations: int = MAX_SOLVE_ITERATIONS,
+) -> LeveredSolution:
+    """Settle the interest deduction against the debt it is charged on.
+
+    Two sequential passes, alternated. The tax pass has to see the whole hold at
+    once because both pools carry forward, which is why this cannot be folded
+    into the schedule's own per-period fixed point: it sits outside it, and a
+    structure can solve the inner one in every period and still fail here.
+
+    The map contracts hard. One turn of the loop moves the saving by the tax
+    rate times the interest on the cash the last turn freed, so the residual
+    falls by roughly ``rate x coupon x year_fraction`` each time — a few tenths
+    of a per cent at any realistic combination — and the feedback is negative:
+    a larger deduction frees cash, the cash repays debt, and the smaller balance
+    earns the smaller interest that shrinks the next deduction. Across the
+    structures in the suite no solve has taken more than four passes.
+
+    Before iterating, the solve checks its own counterfactual: run with no
+    interest at all, the tax pass must reproduce the operating case's tax line
+    period for period. A policy whose rate or loss limit disagrees with the case
+    it is handed fails that check and is refused, because the saving credited to
+    the cash flow is a difference against that line and measuring it off a
+    different base would quietly misstate every period.
+    """
+    if max_iterations < 1:
+        raise TaxPolicyError("a solve needs at least one iteration")
+    limit = money(tolerance)
+    if limit < 0:
+        raise TaxPolicyError("the tolerance must not be negative")
+
+    unlevered = levered_tax_for_model(
+        model,
+        cash_interest=[ZERO] * len(model),
+        policy=policy,
+        opening_carryforward=opening_carryforward,
+        opening_disallowed_interest=opening_disallowed_interest,
+    )
+    for period, row in zip(model, unlevered, strict=True):
+        if row.cash_tax != period.tax.cash_tax:
+            raise TaxPolicyError(
+                "this tax policy disagrees with the operating case it is being run "
+                f"against: with no interest at all, period {period.index} pays "
+                f"{row.cash_tax} here and {period.tax.cash_tax} in the projection. "
+                "Build the policy with TaxPolicy.from_assumptions so the rate and "
+                "the loss limit come from the case itself."
+            )
+
+    base = [p.unlevered_free_cash_flow for p in model]
+    shields = [ZERO] * len(model)
+    # The series the schedule in hand was actually run against, so that what is
+    # returned is self-consistent: the schedule, the tax read off it, and the
+    # cash flow that produced it all describe the same pass.
+    applied = list(base)
+    schedule = run(applied)
+    tax = unlevered
+    residual = ZERO
+    iterations = 1
+
+    while True:
+        tax = levered_tax_for_model(
+            model,
+            cash_interest=[p.cash_interest for p in schedule],
+            accrued_interest=[p.pik_interest for p in schedule],
+            policy=policy,
+            opening_carryforward=opening_carryforward,
+            opening_disallowed_interest=opening_disallowed_interest,
+        )
+        fresh = _shield_series(model, tax)
+        residual = max((abs(a - b) for a, b in zip(fresh, shields, strict=True)), default=ZERO)
+        shields = fresh
+        if residual <= limit:
+            # The schedule in hand was run against the previous saving series,
+            # which this one is within tolerance of, so it is the answer. The
+            # flows returned are the ones that produced it, not the ones just
+            # computed, which no schedule has been run against.
+            return LeveredSolution(
+                schedule=schedule,
+                tax=tax,
+                cash_flows=tuple(applied),
+                iterations=iterations,
+                residual=residual,
+            )
+        flows = [cf + s for cf, s in zip(base, shields, strict=True)]
+        if iterations >= max_iterations:
+            raise TaxCircularityError(
+                f"the interest deduction and the debt it is charged on did not "
+                f"settle in {max_iterations} passes; the saving was still moving "
+                f"by {residual} when the solve stopped"
+            )
+        applied = flows
+        schedule = run(applied)
+        iterations += 1
+
+
+def levered_schedule(
+    structure: CapitalStructure,
+    model: OperatingModel,
+    *,
+    policy: TaxPolicy,
+    opening_cash: Numeric = 0,
+    opening_ebitda: Numeric | None = None,
+    opening_carryforward: Numeric = 0,
+    opening_disallowed_interest: Numeric = 0,
+    tolerance: Numeric = DEFAULT_SOLVE_TOLERANCE,
+    max_iterations: int = MAX_SOLVE_ITERATIONS,
+) -> LeveredSolution:
+    """Run a structure against a case, with the deduction settled against it.
+
+    The plain entry point, for a structure with no events attached to it. A deal
+    with recapitalisations, add-ons or refinancings builds its own runner and
+    calls :func:`solve_levered` directly, which is what ``Deal.levered`` does.
+    """
+    ebitda = [model.trailing_ebitda(i) for i in range(len(model))]
+    anchor = opening_ebitda if opening_ebitda is not None else model.entry_ebitda
+
+    def run(cash_flows: Sequence[Money]) -> DebtSchedule:
+        return DebtSchedule.run(
+            structure,
+            [p.period for p in model],
+            cash_flows,
+            opening_cash=opening_cash,
+            ebitda=ebitda,
+            opening_ebitda=anchor,
+        )
+
+    return solve_levered(
+        model=model,
+        run=run,
+        policy=policy,
+        opening_carryforward=opening_carryforward,
+        opening_disallowed_interest=opening_disallowed_interest,
+        tolerance=tolerance,
+        max_iterations=max_iterations,
     )

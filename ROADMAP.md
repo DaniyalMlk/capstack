@@ -261,7 +261,38 @@ monthly ones, and two things stop them being trustworthy on a leveraged deal.
 - [x] Zero interest checked against the operating model's own tax line, period
       by period, so the new path is cross-checked against the one already in
       the model rather than only against itself
-- [ ] The circularity closed: the deduction frees cash, the cash repays debt,
+- [x] The circularity closed: the deduction frees cash, the cash repays debt,
       the smaller balance earns less interest, and the smaller interest earns
-      a smaller deduction
-- [ ] The whole thing reachable from the command line and from a deal file
+      a smaller deduction. A fixed point between two whole-hold passes rather
+      than inside the schedule's per-period one, because both pools carry
+      forward; it takes a callable that runs a schedule for a cash-flow series,
+      so recapitalisations, add-ons and refinancings stay where they already
+      work and the solve never learns they exist
+- [x] Convergence measured rather than promised: every structure from zero to
+      eight turns, at coupons from 4% to 20%, settles in at most six passes,
+      and the solve reports the residual it stopped on
+- [x] The solve checking its own counterfactual before it starts, since the
+      saving credited to the cash flow is a difference against the operating
+      case's own tax line and a policy at another rate would measure it off the
+      wrong base
+- [x] What is returned being one pass rather than an average of several:
+      re-running each shipped deal's schedule on the cash flows the solve
+      returns reproduces its interest exactly, and breaking that deliberately
+      moved it by 2.4e-06
+- [x] The two results a reader would not guess. A binding cap damps the
+      circularity, because it pins the deduction to earnings and leaves the
+      loop no gain: a saturated structure settles in two passes on a residual
+      of exactly zero. And past saturation a turn of leverage buys no further
+      deduction at all — four structures from six turns to eight deduct the
+      same amount and pay the same cash tax to the last place, differing only
+      in the debt they leave behind
+- [x] The corollary stated rather than buried: the saving is the wrong way to
+      price the cap, because deferring a deduction leaves debt outstanding to
+      earn more interest that is itself deducted, so a capped run can book a
+      larger saving and a lower cash tax while leaving the equity behind more
+      debt
+- [x] The whole thing reachable from the command line and from a deal file,
+      with the cap's rate and its earnings base in the operating block
+- [x] Two of the front page's rows carrying it, both gated: the settled solve
+      across the shipped deals, and the saturation equality with the spread of
+      the debt beside it, so the equality is not vacuous

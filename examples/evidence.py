@@ -53,7 +53,13 @@ from capstack import (
     load_deal,
     money,
 )
+from capstack.daycount import DayCount
+from capstack.debt import CapitalStructure, DebtSchedule, Tranche, TrancheKind
+from capstack.drivers import Driver
+from capstack.operating import OperatingAssumptions, OperatingModel
+from capstack.periods import Frequency, PeriodGrid
 from capstack.sensitivity import Case
+from capstack.tax import InterestLimit, TaxPolicy, levered_schedule
 
 EXAMPLES = Path(__file__).resolve().parent
 
@@ -62,6 +68,16 @@ AMBIGUOUS = (money("-1000"), money("2500"), money("-1560"))
 
 #: Exact roots of 1000x^2 - 2500x + 1560 = 0, in x = 1 + r.
 AMBIGUOUS_EXACT = (Decimal("0.20"), Decimal("0.30"))
+
+#: The leverage multiples the saturation check runs at, all of them past the
+#: point where the cap binds in every period of the reference case.
+SATURATED_TURNS = ("6.0", "6.5", "7.0", "8.0")
+
+#: The blended coupon those multiples are priced at.
+SATURATION_COUPON = "0.08"
+
+#: The cap the saturation check is run under.
+SATURATION_RATE = "0.30"
 
 
 @dataclass(frozen=True)
@@ -81,6 +97,17 @@ class Figures:
     bridge_worst_gap: Decimal
     grid_cells: int
     grid_base_gap: Decimal
+
+    # -- the deduction against the debt it is charged on -----------------
+    solve_deals: int
+    solve_worst_passes: int
+    solve_worst_residual: Decimal
+    solve_interest_gap: Decimal
+    saturated_cases: int
+    saturated_deduction: Decimal
+    saturated_cash_tax: Decimal
+    saturated_deduction_spread: Decimal
+    saturated_debt_spread: Decimal
 
 
 def _ambiguous() -> tuple[tuple[float, ...], float]:
@@ -182,10 +209,139 @@ def _deal_identities() -> tuple[int, Decimal, Decimal, int, Decimal]:
     return len(files), funding_worst, bridge_worst, len(cells), grid_gap
 
 
+def _reference_case() -> tuple[OperatingAssumptions, OperatingModel]:
+    """The case the saturation check is run against.
+
+    Built here rather than read from a deal file because the claim is about a
+    range of leverage multiples against one business, and no shipped deal is
+    struck at four different capital structures.
+    """
+    years = 5
+    assumptions = OperatingAssumptions.of(
+        revenue_growth=Driver.constant("0.08", years),
+        ebitda_margin=Driver.constant("0.20", years),
+        da_rate=Driver.constant("0.04", years),
+        capex_rate=Driver.constant("0.05", years),
+        nwc_rate=Driver.constant("0.15", years),
+        tax_rate="0.25",
+    )
+    grid = PeriodGrid.build(date(2026, 6, 30), years=years, frequency=Frequency.ANNUAL)
+    return assumptions, OperatingModel.project(grid, assumptions, opening_revenue=1000)
+
+
+def _saturation() -> tuple[int, Decimal, Decimal, Decimal, Decimal]:
+    """Past the point the cap binds throughout, leverage buys no deduction.
+
+    Once the cap bites in every period and the pool is never absorbed, the
+    deduction *is* the allowance, and the allowance is a function of earnings
+    alone. So it stops depending on the debt: four structures a full two turns
+    apart deduct the same amount and pay the same cash tax, to the last place.
+
+    The spread across the four is returned as well as the common value, because
+    "they agree" is only worth reading if the thing they agree on would
+    otherwise have differed — and the interest and the closing debt, which do
+    differ, are what shows the leverage was really there.
+    """
+    assumptions, model = _reference_case()
+    limit = InterestLimit.of(SATURATION_RATE)
+    policy = TaxPolicy.from_assumptions(assumptions, interest_limit=limit)
+
+    deductions: list[Decimal] = []
+    taxes: list[Decimal] = []
+    debts: list[Decimal] = []
+    for turns in SATURATED_TURNS:
+        structure = CapitalStructure.of(
+            [
+                Tranche.of(
+                    "Term Loan B",
+                    TrancheKind.TERM_LOAN,
+                    model.entry_ebitda * money(turns),
+                    cash_rate=SATURATION_COUPON,
+                    swept=True,
+                    floating=False,
+                )
+            ],
+            day_count=DayCount.ACT_365F,
+        )
+        solution = levered_schedule(structure, model, policy=policy)
+        if len(solution.tax.binding_periods) != len(model):
+            raise SystemExit(
+                f"{turns}x does not saturate the cap: it bound in "
+                f"{len(solution.tax.binding_periods)} of {len(model)} periods"
+            )
+        deductions.append(Decimal(solution.tax.total_interest_deducted))
+        taxes.append(Decimal(solution.tax.total_cash_tax))
+        debts.append(Decimal(solution.schedule[-1].closing_debt))
+
+    # The allowance, computed from the earnings rather than read back off the
+    # answer, so the common value is checked against its own definition.
+    allowances = sum((p.ebitda * money(SATURATION_RATE) for p in model), money(0))
+    if deductions[0] != Decimal(allowances):
+        raise SystemExit(
+            f"a saturated structure deducted {deductions[0]}, not the summed "
+            f"allowance {Decimal(allowances)}"
+        )
+    if max(taxes) != min(taxes):
+        raise SystemExit(f"saturated structures paid different tax: {taxes}")
+
+    return (
+        len(SATURATED_TURNS),
+        deductions[0],
+        taxes[0],
+        max(deductions) - min(deductions),
+        max(debts) - min(debts),
+    )
+
+
+def _settled() -> tuple[int, int, Decimal, Decimal]:
+    """The deduction settled against the debt, on every shipped deal.
+
+    Two claims. The solve converges, and the pass count and the residual it
+    stopped on are reported rather than promised. And what it returns is a
+    *pass* rather than an average of passes: re-running the schedule on the
+    cash flows it returns reproduces the interest it reported, exactly, which
+    is the strongest statement available about a fixed point.
+    """
+    files = sorted(EXAMPLES.glob("*.json"))
+    worst_passes = 0
+    worst_residual = Decimal(0)
+    worst_interest_gap = Decimal(0)
+
+    for path in files:
+        deal = load_deal(path)
+        model = deal.project()
+        solution = deal.levered(model)
+        worst_passes = max(worst_passes, solution.iterations)
+        worst_residual = max(worst_residual, Decimal(solution.residual))
+
+        assert deal.structure is not None
+        again = DebtSchedule.run(
+            deal.structure,
+            [p.period for p in model],
+            solution.cash_flows,
+            opening_cash=(
+                deal.opening_cash if deal.opening_cash is not None else deal.cash_at_close
+            ),
+            ebitda=[model.trailing_ebitda(i) for i in range(len(model))],
+            opening_ebitda=deal.transaction.valuation.ltm_ebitda,
+            recapitalisations=deal.recapitalisations,
+            acquisitions=deal.acquisitions,
+            refinancings=deal.refinancings,
+            write_offs=deal.write_offs(),
+        )
+        for left, right in zip(solution.schedule, again, strict=True):
+            gap = abs(Decimal(left.cash_interest - right.cash_interest))
+            worst_interest_gap = max(worst_interest_gap, gap)
+
+    return len(files), worst_passes, worst_residual, worst_interest_gap
+
+
 def measure() -> Figures:
     roots, ambiguous_worst = _ambiguous()
     found, closed, two_flow_error = _two_flow()
     deals, funding_worst, bridge_worst, cells, grid_gap = _deal_identities()
+    solve_deals, passes, residual, interest_gap = _settled()
+    cases, deduction, cash_tax, deduction_spread, debt_spread = _saturation()
     return Figures(
         ambiguous_roots=roots,
         ambiguous_worst_error=ambiguous_worst,
@@ -197,6 +353,15 @@ def measure() -> Figures:
         bridge_worst_gap=bridge_worst,
         grid_cells=cells,
         grid_base_gap=grid_gap,
+        solve_deals=solve_deals,
+        solve_worst_passes=passes,
+        solve_worst_residual=residual,
+        solve_interest_gap=interest_gap,
+        saturated_cases=cases,
+        saturated_deduction=deduction,
+        saturated_cash_tax=cash_tax,
+        saturated_deduction_spread=deduction_spread,
+        saturated_debt_spread=debt_spread,
     )
 
 
@@ -206,6 +371,7 @@ def measure() -> Figures:
 BOUNDS: tuple[tuple[str, str], ...] = (
     ("the solver against the quadratic's exact roots", "1e-09"),
     ("a two-flow return against the multiple over the hold", "1e-12"),
+    ("the deduction settled against the debt it is charged on", "0.0001"),
 )
 
 
@@ -232,6 +398,33 @@ def check(figures: Figures) -> None:
         raise SystemExit(f"only {figures.deals} deals checked; the repository ships more")
     if figures.grid_cells != 6:
         raise SystemExit(f"the grid has {figures.grid_cells} cells, not 6")
+
+    # The solve's own stopping criterion, restated as a gate. A residual above
+    # the tolerance the solver returned on means it did not converge.
+    if figures.solve_worst_residual > Decimal("0.0001"):
+        raise SystemExit(
+            f"a solve stopped with the saving still moving by "
+            f"{figures.solve_worst_residual}"
+        )
+    if figures.solve_worst_passes > 6:
+        raise SystemExit(
+            f"a solve took {figures.solve_worst_passes} passes; the README says at most 6"
+        )
+    # Equalities again, on exact arithmetic.
+    for what, gap in (
+        ("re-running a settled schedule changed its interest", figures.solve_interest_gap),
+        ("saturated structures deducted different amounts", figures.saturated_deduction_spread),
+    ):
+        if gap != 0:
+            raise SystemExit(f"{what}, by {gap}")
+    # And the leverage really did differ, or the equality above is vacuous.
+    if figures.saturated_debt_spread <= 0:
+        raise SystemExit(
+            "the saturated structures left the same debt, so they were not "
+            "actually different structures"
+        )
+    if figures.saturated_cases != len(SATURATED_TURNS):
+        raise SystemExit(f"only {figures.saturated_cases} saturated structures checked")
 
 
 def _exact(amount: Decimal) -> str:
@@ -273,6 +466,22 @@ def rows(figures: Figures) -> tuple[tuple[str, str], ...]:
             f"{figures.grid_cells} cells each a full rebuild, base cell out by "
             f"{_exact(figures.grid_base_gap)}",
         ),
+        (
+            "The interest deduction settled against the debt it is charged on, "
+            f"{figures.solve_deals} shipped deals",
+            f"at most {figures.solve_worst_passes} passes, worst residual "
+            f"{figures.solve_worst_residual:.1e}, and re-running each schedule on "
+            f"the settled cash flows moves its interest by "
+            f"{_exact(figures.solve_interest_gap)}",
+        ),
+        (
+            f"The deduction past saturation, {figures.saturated_cases} structures from "
+            f"{SATURATED_TURNS[0]}x to {SATURATED_TURNS[-1]}x",
+            f"all deduct {figures.saturated_deduction:.2f} and pay "
+            f"{figures.saturated_cash_tax:.2f} - spread "
+            f"{_exact(figures.saturated_deduction_spread)}, while the debt they leave "
+            f"spans {figures.saturated_debt_spread:.2f}",
+        ),
     )
 
 
@@ -295,6 +504,18 @@ def report(figures: Figures | None = None) -> str:
     lines.append(f"   deals checked: {measured.deals}")
     lines.append(f"   funding worst gap: {_exact(measured.funding_worst_gap)}")
     lines.append(f"   bridge worst residue: {_exact(measured.bridge_worst_gap)}")
+    lines.append(
+        f"   settled on {measured.solve_deals} deals: at most "
+        f"{measured.solve_worst_passes} passes, worst residual "
+        f"{measured.solve_worst_residual}, interest gap on re-run "
+        f"{_exact(measured.solve_interest_gap)}"
+    )
+    lines.append(
+        f"   saturated: {measured.saturated_cases} structures deduct "
+        f"{measured.saturated_deduction}, pay {measured.saturated_cash_tax}, "
+        f"spread {_exact(measured.saturated_deduction_spread)}, debt spread "
+        f"{measured.saturated_debt_spread}"
+    )
     lines.append(
         f"   grid: {measured.grid_cells} cells, base cell gap "
         f"{_exact(measured.grid_base_gap)}"

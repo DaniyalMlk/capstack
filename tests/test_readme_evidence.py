@@ -57,6 +57,9 @@ QUOTED = (
     "balanced by equality, worst gap 0, not within a tolerance",
     "worst unexplained residue 0 across 4 deals",
     "6 cells each a full rebuild, base cell out by 0",
+    "at most 5 passes, worst residual 5.9e-5, and re-running each schedule on the settled "
+    "cash flows moves its interest by 0",
+    "all deduct 380.16 and pay 158.40 - spread 0, while the debt they leave spans 615.22",
 )
 
 #: Row labels from the evidence table. Presence is what is checked, not the
@@ -68,6 +71,8 @@ ROWS = (
     "Sources and uses on all 4 shipped deals",
     "The value-creation bridge against the change in equity value",
     "A sensitivity grid's base cell against the deal run on its own",
+    "The interest deduction settled against the debt it is charged on, 4 shipped deals",
+    "The deduction past saturation, 4 structures from 6.0x to 8.0x",
 )
 
 
@@ -126,7 +131,15 @@ def test_the_identities_are_zero_rather_than_small(gate_output: str) -> None:
     a billion has a missing line item, so the check is equality. Reading the
     spelled-out figures back is what stops the prose from outliving it.
     """
-    for line in ("funding worst gap: 0", "bridge worst residue: 0", "base cell gap 0"):
+    for line in (
+        "funding worst gap: 0",
+        "bridge worst residue: 0",
+        "base cell gap 0",
+        # The settled schedule reproduces its own interest, and the saturated
+        # structures deduct the same amount. Both exact, both zero.
+        "interest gap on re-run 0",
+        "spread 0,",
+    ):
         assert line in gate_output
 
 
