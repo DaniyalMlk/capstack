@@ -43,6 +43,8 @@ which runs in CI and exits non-zero if one of them moves:
 | Sources and uses on all 4 shipped deals | balanced by equality, worst gap 0, not within a tolerance |
 | The value-creation bridge against the change in equity value | worst unexplained residue 0 across 4 deals |
 | A sensitivity grid's base cell against the deal run on its own | 6 cells each a full rebuild, base cell out by 0 |
+| The interest deduction settled against the debt it is charged on, 4 shipped deals | at most 5 passes, worst residual 5.9e-5, and re-running each schedule on the settled cash flows moves its interest by 0 |
+| The deduction past saturation, 4 structures from 6.0x to 8.0x | all deduct 380.16 and pay 158.40 - spread 0, while the debt they leave spans 615.22 |
 
 The first two rows are the ones worth looking at twice, because they are the
 only two checked against something that shares no derivation with the engine.
@@ -60,7 +62,26 @@ the solver rather than a restatement of it, and it is the check that makes
 a known hold is `m ** (1 / years) - 1`, by definition. A root finder that
 disagrees with that on two flows is wrong, whatever it does on twenty.
 
-The last three rows are zeros rather than small numbers, and the distinction is
+**Two of the rows are about the circularity between tax and debt.** The
+interest deduction frees cash, the cash repays debt, the smaller balance earns
+less interest, and the smaller interest earns a smaller deduction. The solve
+that settles those against each other reports its own work — at most five
+passes on the shipped deals, and the residual it stopped on — rather than
+promising convergence. The claim worth more than the pass count is the third
+figure in that row: re-running each schedule on the cash flows the solve
+returns reproduces the interest it reported *exactly*. What comes back is one
+pass, not an average of several.
+
+**And past a point, leverage stops buying a deduction at all.** Once the cap
+binds in every period and the disallowed pool is never absorbed, the deduction
+*is* the allowance, and the allowance is a function of earnings alone — so it
+stops depending on the debt. Four structures from six turns to eight deduct the
+same amount and pay the same cash tax, to the last place, while the debt they
+leave at exit spans 615. The spread of zero is the finding; the spread of 615 is
+what stops it being vacuous, because it shows the four really were different
+structures.
+
+The zero rows are zeros rather than small numbers, and the distinction is
 the point. A funding table out by a few thousand on a billion has not nearly
 balanced — it has a missing line item, and a tolerance would hide precisely the
 error the table exists to catch. The same goes for a bridge that nearly
@@ -75,10 +96,10 @@ number that happens to be true on the machine that measured it. The bound is
 the claim, and it is the bound the script enforces.
 
 ```bash
-python examples/evidence.py     # all five, non-zero if a figure moves
+python examples/evidence.py     # all seven, non-zero if a figure moves
 ```
 
-Behind them: 1,540 tests on Python 3.11 through 3.13, with `mypy --strict` and
+Behind them: 1,667 tests on Python 3.11 through 3.13, with `mypy --strict` and
 `ruff` over the source, the tests and the gate above.
 
 ## Install
