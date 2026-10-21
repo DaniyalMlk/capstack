@@ -54,6 +54,14 @@ from .operating import (
 )
 from .outcome import Outcome, Security, SecurityKind, default_securities
 from .periods import Frequency, PeriodGrid
+from .tax import (
+    EarningsBase,
+    InterestLimit,
+    LeveredSolution,
+    TaxPolicy,
+    TaxPolicyError,
+    solve_levered,
+)
 from .transaction import DebtFunding, EntryValuation, LineItem, Transaction
 
 __all__ = [
@@ -294,6 +302,8 @@ class Deal:
     operating: OperatingAssumptions | None = None
     opening_revenue: Money | None = None
     opening_net_working_capital: Money | None = None
+    #: The cap on the interest deduction, where the file describes one.
+    interest_limit: InterestLimit | None = None
     book: TargetBookBalanceSheet | None = None
     accounting: PurchaseAccounting | None = None
     structure: CapitalStructure | None = None
@@ -510,6 +520,71 @@ class Deal:
             raise DealSpecError(f"acquisitions: {exc}") from exc
         except RefinancingError as exc:
             raise DealSpecError(f"refinancings: {exc}") from exc
+
+    @property
+    def tax_policy(self) -> TaxPolicy:
+        """The tax regime this deal is run under.
+
+        Built from the operating case rather than from anything separate, so
+        the rate and the loss limit cannot drift from the projection the saving
+        is measured against.
+        """
+        if self.operating is None:
+            raise DealSpecError(
+                'this deal has no operating case; add "projection" and '
+                '"operating" blocks to the deal file'
+            )
+        return TaxPolicy.from_assumptions(self.operating, interest_limit=self.interest_limit)
+
+    def levered(self, model: OperatingModel | None = None) -> LeveredSolution:
+        """Run the structure with the interest deduction settled against it.
+
+        The schedule :meth:`schedule` produces services the structure out of
+        unlevered free cash flow, which is to say out of a cash flow taxed as
+        though there were no structure. This one closes that loop.
+
+        ``model`` is taken rather than projected again for the same reason it
+        is there: a caller asking several questions of one case should pay for
+        it once, and a solve runs the schedule several times over.
+        """
+        if self.structure is None:
+            raise DealSpecError(
+                'this deal has no capital structure; add a "structure" block and '
+                "price the tranches under \"debt\""
+            )
+        case = self.project() if model is None else model
+        assert self.operating is not None  # tax_policy refuses a deal without one
+        periods = [p.period for p in case]
+        ebitda = [case.trailing_ebitda(i) for i in range(len(case))]
+        opening_cash = (
+            self.opening_cash if self.opening_cash is not None else self.cash_at_close
+        )
+        anchor = self.transaction.valuation.ltm_ebitda
+        write_offs = self.write_offs()
+
+        def run(cash_flows: Sequence[Money]) -> DebtSchedule:
+            return DebtSchedule.run(
+                self.structure,  # type: ignore[arg-type]
+                periods,
+                cash_flows,
+                opening_cash=opening_cash,
+                ebitda=ebitda,
+                opening_ebitda=anchor,
+                recapitalisations=self.recapitalisations,
+                acquisitions=self.acquisitions,
+                refinancings=self.refinancings,
+                write_offs=write_offs,
+            )
+
+        try:
+            return solve_levered(
+                model=case,
+                run=run,
+                policy=self.tax_policy,
+                opening_carryforward=self.operating.opening_carryforward,
+            )
+        except (RecapitalisationError, AddOnError, RefinancingError) as exc:
+            raise DealSpecError(f"{type(exc).__name__}: {exc}") from exc
 
     @property
     def has_recapitalisations(self) -> bool:
@@ -1332,7 +1407,7 @@ def _parse_projection(data: dict[str, Any], close: date | None) -> PeriodGrid:
 
 def _parse_operating(
     data: dict[str, Any], periods: int
-) -> tuple[OperatingAssumptions, Money, Money | None]:
+) -> tuple[OperatingAssumptions, Money, Money | None, InterestLimit | None]:
     where = "operating"
     opening_revenue = _amount(
         _require(data, "opening_revenue", where), f"{where}.opening_revenue"
@@ -1361,7 +1436,31 @@ def _parse_operating(
             else DEFAULT_NOL_USAGE_LIMIT
         ),
     )
-    return assumptions, opening_revenue, opening_nwc
+    return assumptions, opening_revenue, opening_nwc, _parse_interest_limit(data)
+
+
+def _parse_interest_limit(data: dict[str, Any]) -> InterestLimit | None:
+    """The cap on the interest deduction, if the file describes one.
+
+    Absent means an uncapped deduction, which is both a real regime and the
+    comparison that prices the cap: run the same file twice and difference it.
+    """
+    raw = data.get("interest_limit")
+    if raw is None:
+        return None
+    where = "operating.interest_limit"
+    if not isinstance(raw, dict):
+        raise DealSpecError(f"{where}: expected an object")
+    base_raw = str(raw.get("base", EarningsBase.EBITDA.value)).lower()
+    try:
+        base = EarningsBase(base_raw)
+    except ValueError:
+        allowed = ", ".join(repr(b.value) for b in EarningsBase)
+        raise DealSpecError(f"{where}.base: expected one of {allowed}, got {base_raw!r}") from None
+    try:
+        return InterestLimit(rate=_amount(_require(raw, "rate", where), f"{where}.rate"), base=base)
+    except TaxPolicyError as exc:
+        raise DealSpecError(f"{where}: {exc}") from exc
 
 
 def parse_deal(data: dict[str, Any]) -> Deal:
@@ -1413,6 +1512,7 @@ def parse_deal(data: dict[str, Any]) -> Deal:
     assumptions: OperatingAssumptions | None = None
     opening_revenue: Money | None = None
     opening_nwc: Money | None = None
+    interest_limit: InterestLimit | None = None
 
     projection_raw = data.get("projection")
     operating_raw = data.get("operating")
@@ -1428,7 +1528,7 @@ def parse_deal(data: dict[str, Any]) -> Deal:
         if not isinstance(operating_raw, dict):
             raise DealSpecError("operating: expected an object")
         grid = _parse_projection(projection_raw, close)
-        assumptions, opening_revenue, opening_nwc = _parse_operating(
+        assumptions, opening_revenue, opening_nwc, interest_limit = _parse_operating(
             operating_raw, grid.years
         )
 
@@ -1554,6 +1654,7 @@ def parse_deal(data: dict[str, Any]) -> Deal:
         operating=assumptions,
         opening_revenue=opening_revenue,
         opening_net_working_capital=opening_nwc,
+        interest_limit=interest_limit,
         book=book,
         accounting=accounting,
         structure=structure,
