@@ -104,6 +104,19 @@ from .spec import (
     load_deal,
     parse_deal,
 )
+from .tax import (
+    DEFAULT_INTEREST_LIMIT_RATE,
+    EarningsBase,
+    InterestDeduction,
+    InterestLimit,
+    LeveredTaxPeriod,
+    LeveredTaxSchedule,
+    TaxPolicy,
+    TaxPolicyError,
+    levered_tax,
+    levered_tax_for_model,
+    levered_tax_schedule,
+)
 from .transaction import (
     DebtFunding,
     EntryValuation,
@@ -116,6 +129,7 @@ from .transaction import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "DEFAULT_INTEREST_LIMIT_RATE",
     "AcquiredStream",
     "AddOn",
     "AddOnError",
@@ -146,6 +160,7 @@ __all__ = [
     "Distribution",
     "Draw",
     "Driver",
+    "EarningsBase",
     "EntryValuation",
     "EquityPlan",
     "ExitValuation",
@@ -156,6 +171,10 @@ __all__ = [
     "IncentiveError",
     "IncentivePlan",
     "InterestBasis",
+    "InterestDeduction",
+    "InterestLimit",
+    "LeveredTaxPeriod",
+    "LeveredTaxSchedule",
     "LineItem",
     "Measure",
     "Metric",
@@ -190,6 +209,8 @@ __all__ = [
     "SweepGrid",
     "SweepStep",
     "TargetBookBalanceSheet",
+    "TaxPolicy",
+    "TaxPolicyError",
     "TaxResult",
     "Tranche",
     "TrancheKind",
@@ -205,6 +226,9 @@ __all__ = [
     "cagr",
     "default_securities",
     "irr_periodic",
+    "levered_tax",
+    "levered_tax_for_model",
+    "levered_tax_schedule",
     "load_deal",
     "moic",
     "money",
