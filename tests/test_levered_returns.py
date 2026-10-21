@@ -76,7 +76,11 @@ def test_the_deduction_is_worth_between_ninety_and_two_hundred_basis_points(
 
     gain = (after - before) * 10_000
     assert 85.0 <= gain <= 200.0, f"{path.stem} gained {gain:.1f}bp"
-    assert settled.outcome.moic > plain.outcome.moic
+
+    before_moic, after_moic = plain.outcome.moic, settled.outcome.moic
+    assert before_moic is not None
+    assert after_moic is not None
+    assert after_moic > before_moic
 
 
 @pytest.mark.parametrize("path", DEALS, ids=lambda p: p.stem)
