@@ -45,6 +45,7 @@ which runs in CI and exits non-zero if one of them moves:
 | A sensitivity grid's base cell against the deal run on its own | 6 cells each a full rebuild, base cell out by 0 |
 | The interest deduction settled against the debt it is charged on, 4 shipped deals | at most 5 passes, worst residual 5.9e-5, and re-running each schedule on the settled cash flows moves its interest by 0 |
 | The deduction past saturation, 4 structures from 6.0x to 8.0x | all deduct 380.16 and pay 158.40 - spread 0, while the debt they leave spans 615.22 |
+| What the deduction is worth, 4 shipped deals | 90 to 189 basis points of return, and the equity gains 1.09 to 1.15 times the cash tax saved rather than once |
 
 The first two rows are the ones worth looking at twice, because they are the
 only two checked against something that shares no derivation with the engine.
@@ -81,6 +82,26 @@ leave at exit spans 615. The spread of zero is the finding; the spread of 615 is
 what stops it being vacuous, because it shows the four really were different
 structures.
 
+**And what all of that is worth is 90 to 189 basis points of return.** Which
+is why the convention is offered at all: a deal underwritten at 17.1% clears a
+20% hurdle at 18.9% no more than it did, but the gap between those two numbers
+is not a rounding difference, and a model that reports the first while the
+business pays the second is answering a question nobody asked.
+
+The second half of that row is the part worth reading twice. The equity gains
+**more** than the cash tax the structure saved — 1.09 to 1.15 times it, not
+once. The saved cash is swept against the debt, and debt repaid early does not
+accrue the interest it would otherwise have accrued, so the equity collects the
+saving *and* the interest the saving avoided. A test asserting the obvious
+thing, that the equity gains exactly the saving, is how that was found: it
+failed.
+
+The convention is **opt-in**, not the new default. Every figure in this
+repository is struck on the unlevered basis, the worked example's expected
+values were computed by hand on it, and which convention a model runs under is
+a modelling decision rather than a defect. `Case.run(deal, levered=True)` and
+`capstack exit --levered` ask for the other one.
+
 The zero rows are zeros rather than small numbers, and the distinction is
 the point. A funding table out by a few thousand on a billion has not nearly
 balanced — it has a missing line item, and a tolerance would hide precisely the
@@ -96,10 +117,10 @@ number that happens to be true on the machine that measured it. The bound is
 the claim, and it is the bound the script enforces.
 
 ```bash
-python examples/evidence.py     # all seven, non-zero if a figure moves
+python examples/evidence.py     # all eight, non-zero if a figure moves
 ```
 
-Behind them: 1,667 tests on Python 3.11 through 3.13, with `mypy --strict` and
+Behind them: 1,698 tests on Python 3.11 through 3.13, with `mypy --strict` and
 `ruff` over the source, the tests and the gate above.
 
 ## Install
