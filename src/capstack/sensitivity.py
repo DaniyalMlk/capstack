@@ -50,7 +50,7 @@ from .operating import OperatingAssumptions, OperatingModel
 from .outcome import Outcome
 from .periods import PeriodGrid
 from .spec import Deal
-from .tax import LeveredSolution
+from .tax import EarningsBase, InterestLimit, LeveredSolution
 
 __all__ = [
     "Axis",
@@ -151,6 +151,21 @@ def _with_entry_multiple(deal: Deal, value: Money) -> Deal:
 
 def _with_exit_multiple(deal: Deal, value: Money) -> Deal:
     return dataclasses.replace(deal, exit_multiple=value)
+
+
+def _with_interest_limit(deal: Deal, rate: Money) -> Deal:
+    """Cap the interest deduction at ``rate`` of earnings.
+
+    Applied to a deal whose file caps nothing, this *creates* the cap, which is
+    deliberate: "what would a cap cost this deal" is the question most worth
+    asking of a structure that was underwritten without one. The earnings base
+    comes from the file where it has one and defaults otherwise, because the
+    axis moves the rate and the base is a different question.
+    """
+    if rate < 0:
+        raise SensitivityError("a deduction cap is a share of earnings, so not below zero")
+    base = deal.interest_limit.base if deal.interest_limit is not None else EarningsBase.EBITDA
+    return dataclasses.replace(deal, interest_limit=InterestLimit(rate=rate, base=base))
 
 
 def _with_leverage(deal: Deal, turns: Money) -> Deal:
@@ -279,6 +294,7 @@ class Dimension(Enum):
     EBITDA_MARGIN = "ebitda-margin"
     EXIT_YEAR = "exit-year"
     BASE_RATE = "base-rate"
+    INTEREST_LIMIT = "interest-limit"
 
     def __str__(self) -> str:
         return self.value
@@ -293,6 +309,7 @@ class Dimension(Enum):
             Dimension.EBITDA_MARGIN: "EBITDA margin",
             Dimension.EXIT_YEAR: "Exit year",
             Dimension.BASE_RATE: "Base rate",
+            Dimension.INTEREST_LIMIT: "Interest deduction cap",
         }[self]
 
     @property
@@ -304,6 +321,10 @@ class Dimension(Enum):
             Dimension.REVENUE_GROWTH: Unit.POINTS,
             Dimension.EBITDA_MARGIN: Unit.POINTS,
             Dimension.EXIT_YEAR: Unit.YEARS,
+            # A level and not a shift: a cap of 30% is 30% of earnings, and an
+            # axis reading "two points off whatever the file says" would be
+            # meaningless on a file that caps nothing.
+            Dimension.INTEREST_LIMIT: Unit.RATE,
             Dimension.BASE_RATE: Unit.POINTS,
         }[self]
 
@@ -348,6 +369,14 @@ class Dimension(Enum):
                 deal.transaction.valuation.ltm_ebitda,
                 default=ZERO,
             )
+        if self is Dimension.INTEREST_LIMIT:
+            if deal.interest_limit is None:
+                raise SensitivityError(
+                    "this deal's file caps nothing, so there is no cap to centre an "
+                    'axis on; add an "interest_limit" to the operating block, or '
+                    "state the rates for the axis outright"
+                )
+            return deal.interest_limit.rate
         if deal.grid is None:
             raise SensitivityError(
                 "this deal has no projection, so there is no exit year to read"
@@ -363,6 +392,7 @@ _APPLY = {
     Dimension.EBITDA_MARGIN: _with_ebitda_margin,
     Dimension.EXIT_YEAR: _with_exit_year,
     Dimension.BASE_RATE: _with_base_rate,
+    Dimension.INTEREST_LIMIT: _with_interest_limit,
 }
 
 
@@ -431,6 +461,8 @@ class Metric(Enum):
     ENTRY_LEVERAGE = "entry-leverage"
     EXIT_LEVERAGE = "exit-leverage"
     CUSHION = "cushion"
+    CASH_TAX = "cash-tax"
+    TAX_SAVING = "tax-saving"
 
     def __str__(self) -> str:
         return self.value
@@ -445,6 +477,8 @@ class Metric(Enum):
             Metric.ENTRY_LEVERAGE: "Net leverage at close",
             Metric.EXIT_LEVERAGE: "Net leverage at exit",
             Metric.CUSHION: "Tightest covenant cushion",
+            Metric.CASH_TAX: "Cash tax over the hold",
+            Metric.TAX_SAVING: "Cash tax saved by the deduction",
         }[self]
 
     @property
@@ -457,11 +491,24 @@ class Metric(Enum):
             Metric.ENTRY_LEVERAGE: Unit.TURNS,
             Metric.EXIT_LEVERAGE: Unit.TURNS,
             Metric.CUSHION: Unit.SHARE,
+            Metric.CASH_TAX: Unit.AMOUNT,
+            Metric.TAX_SAVING: Unit.AMOUNT,
         }[self]
 
     @property
     def needs_covenants(self) -> bool:
         return self is Metric.CUSHION
+
+    @property
+    def needs_levered(self) -> bool:
+        """Whether this metric can only be read off a settled solve.
+
+        There is nothing to report for either of these on the unlevered basis:
+        the structure's cash tax is the operating case's own tax line, and the
+        saving is zero by construction. Refusing the grid up front is better
+        than filling it with the same excuse in every cell.
+        """
+        return self in (Metric.CASH_TAX, Metric.TAX_SAVING)
 
     def read(self, case: Case) -> tuple[Money | None, str]:
         """The figure, or the reason there is not one.
@@ -492,6 +539,12 @@ class Metric(Enum):
             )
         if self is Metric.EXIT_LEVERAGE:
             return outcome.valuation.exit_leverage, ""
+        if self in (Metric.CASH_TAX, Metric.TAX_SAVING):
+            if case.levered is None:
+                return None, "this case was not run on a levered tax basis"
+            if self is Metric.CASH_TAX:
+                return case.levered.tax.total_cash_tax, ""
+            return case.levered.total_shield, ""
         if case.covenants is None:
             return None, "this deal describes no covenants"
         cushion = case.covenants.minimum_cushion
@@ -628,8 +681,23 @@ class Grid:
         return tuple(c for line in self.cells for c in line if c.breached)
 
     @classmethod
-    def run(cls, deal: Deal, rows: Axis, columns: Axis, metric: Metric) -> Grid:
-        """Rebuild and run ``deal`` at every intersection of the two axes."""
+    def run(
+        cls,
+        deal: Deal,
+        rows: Axis,
+        columns: Axis,
+        metric: Metric,
+        *,
+        levered: bool = False,
+    ) -> Grid:
+        """Rebuild and run ``deal`` at every intersection of the two axes.
+
+        ``levered`` passes the tax basis down to every cell. It costs real time
+        — a settled cell solves the schedule several times over rather than
+        once — and it moves the answer by 90 to 189 basis points on the shipped
+        deals, which is more than the width of most of the bands a grid like
+        this is read for.
+        """
         if rows.dimension is columns.dimension:
             raise SensitivityError(
                 f"both axes move the {rows.dimension.label.lower()}; a grid needs "
@@ -640,17 +708,25 @@ class Grid:
                 f"{metric.label.lower()} is measured against maintenance tests, "
                 f'and this deal describes none; add a "covenants" block'
             )
+        if metric.needs_levered and not levered:
+            raise SensitivityError(
+                f"{metric.label.lower()} is a figure only a levered tax basis "
+                "produces; on the default basis the structure's cash tax is the "
+                "operating case's own and the saving is zero by construction. "
+                "Run the grid with levered=True, or from the command line with "
+                "--levered"
+            )
         # The base case is run before anything is flexed, so a grid built on a
         # deal that does not run at all fails outright instead of printing a
         # table of identical excuses.
-        base_case = Case.run(deal)
+        base_case = Case.run(deal, levered=levered)
         base, base_note = metric.read(base_case)
 
         lines = []
         for row in rows:
             line = []
             for column in columns:
-                line.append(_cell(deal, rows, row, columns, column, metric))
+                line.append(_cell(deal, rows, row, columns, column, metric, levered=levered))
             lines.append(tuple(line))
         return cls(
             rows=rows,
@@ -669,11 +745,13 @@ def _cell(
     columns: Axis,
     column: Money,
     metric: Metric,
+    *,
+    levered: bool = False,
 ) -> Cell:
     """Rebuild the deal at one intersection and read the metric off it."""
     try:
         flexed = columns.dimension.apply(rows.dimension.apply(deal, row), column)
-        case = Case.run(flexed)
+        case = Case.run(flexed, levered=levered)
     except CELL_FAILURES as exc:
         return Cell(row=row, column=column, value=None, note=str(exc))
     value, note = metric.read(case)
