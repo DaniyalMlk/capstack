@@ -221,3 +221,47 @@ monthly ones, and two things stop them being trustworthy on a leveraged deal.
       measures
 - [ ] A first release on the index, which waits on the publisher being
       registered there for this project
+
+## Phase 13 — Tax the business as it is actually financed
+
+- [x] A tax layer taking an interest series rather than a capital structure,
+      so the computation is a pure sequential pass over periods and can be
+      driven by interest written down by hand instead of by a solver
+- [x] Taxable income as EBIT less the interest actually deducted, which is the
+      line the operating case cannot produce for itself: it is unlevered on
+      purpose, and taxing EBIT is the right thing for it to do
+- [x] A cap on the deduction, because a leveraged deal is exactly where such a
+      cap binds — the threshold measured rather than restated, and read as
+      structure: 3.75 turns of leverage at an 8% blended coupon on an EBITDA
+      base, 3.00 on an EBIT base, against sponsor structures struck at five
+- [x] Both earnings bases, since the same deal passes on one and binds on the
+      other and both are live regimes; the EBIT threshold is the EBITDA one
+      scaled by EBIT's share of EBITDA, so it is capital intensity rather than
+      leverage that moves it
+- [x] Disallowed interest carried in a pool and tested again next period
+      alongside next period's interest, rather than lost — and the case where
+      the structure never generates the headroom to absorb it, which is the
+      usual one
+- [x] Interest offered to the cap whether paid in cash or accrued, with the
+      regime that waits for the cash deferring the accrued part to the pool
+      instead of discarding it
+- [x] The cap struck against earnings taken before relief, which fixes its
+      order against the loss pool: the cap first, the carried-forward loss
+      against what the deduction leaves behind. The reversal is a different
+      cash tax and a different closing pool in every period where both bite,
+      and the case that distinguishes them is in the suite
+- [x] The saving carried as a difference against the same period computed with
+      no deduction from the same opening pool. Deduction times rate is right
+      only where the period is profitable on both measures and unsheltered; it
+      is kept alongside as the naive figure so the two can be compared rather
+      than argued about
+- [x] Both pool movements asserted as equalities rather than tolerances, since
+      the arithmetic is exact and a tolerance would hide the error the identity
+      exists to catch
+- [x] Zero interest checked against the operating model's own tax line, period
+      by period, so the new path is cross-checked against the one already in
+      the model rather than only against itself
+- [ ] The circularity closed: the deduction frees cash, the cash repays debt,
+      the smaller balance earns less interest, and the smaller interest earns
+      a smaller deduction
+- [ ] The whole thing reachable from the command line and from a deal file
