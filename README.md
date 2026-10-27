@@ -129,13 +129,6 @@ Behind them: 1,719 tests on Python 3.11 through 3.13, with `mypy --strict` and
 python -m pip install capstack-lbo
 ```
 
-> **Not on the package index yet.** The `pip install` line above is what it
-> will be; until the first release lands, install from source:
->
-> ```bash
-> python -m pip install "git+https://github.com/DaniyalMlk/capstack.git"
-> ```
-
 The distribution is `capstack-lbo` and the import is `capstack`. The two differ
 because `capstack` on the index is an unrelated library; the binary, the module
 and every identifier are unchanged, and `capstack-lbo` also works as a command
