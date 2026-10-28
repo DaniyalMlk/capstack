@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
-from .money import ONE, ZERO, Money, Numeric, money, safe_div
+from .money import ONE, ZERO, Money, Numeric, money, safe_div, written
 
 __all__ = [
     "DebtFunding",
@@ -191,8 +191,9 @@ class SourcesAndUses:
     def __post_init__(self) -> None:
         if self.total_sources != self.total_uses:
             raise UnbalancedTransactionError(
-                f"sources ({self.total_sources}) do not equal uses ({self.total_uses}); "
-                f"the difference is {self.total_sources - self.total_uses}"
+                f"sources ({written(self.total_sources)}) do not equal uses "
+                f"({written(self.total_uses)}); the difference is "
+                f"{written(self.total_sources - self.total_uses)}"
             )
 
     @property
@@ -275,8 +276,8 @@ class Transaction:
             raise ValueError("the transaction fee rate must not be negative")
         if self.cash_from_balance_sheet > self.valuation.existing_cash:
             raise ValueError(
-                f"cannot take {self.cash_from_balance_sheet} from the balance sheet; "
-                f"the target holds {self.valuation.existing_cash}"
+                f"cannot take {written(self.cash_from_balance_sheet)} from the balance "
+                f"sheet; the target holds {written(self.valuation.existing_cash)}"
             )
         names = [t.name for t in self.debt]
         if len(names) != len(set(names)):

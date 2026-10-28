@@ -62,6 +62,7 @@ from .money import (
     is_close,
     money,
     safe_div,
+    written,
 )
 from .operating import OperatingModel
 from .periods import Period, trailing_window
@@ -248,8 +249,8 @@ class Tranche:
             raise ValueError(f"{self.name}: the commitment must not be negative")
         if self.commitment and self.face > self.commitment:
             raise ValueError(
-                f"{self.name}: drawn at close ({self.face}) exceeds the commitment "
-                f"({self.commitment})"
+                f"{self.name}: drawn at close ({written(self.face)}) exceeds the "
+                f"commitment ({written(self.commitment)})"
             )
         if self.commitment and not self.is_revolving and self.availability is None:
             raise ValueError(
@@ -1032,10 +1033,12 @@ def _refinance(
     available = row.closing_cash - structure.minimum_cash
     if from_cash > available:
         raise RefinancingError(
-            f"{event.label}: retiring {balance} at a premium needs {from_cash} off a "
-            f"balance sheet holding {row.closing_cash} against a minimum of "
-            f"{structure.minimum_cash}, which leaves only {available}; raise more on "
-            f"the new paper or move the takeout later"
+            f"{event.label}: retiring {written(balance)} at a premium needs "
+            f"{written(from_cash)} off a balance sheet holding "
+            f"{written(row.closing_cash)} against a minimum of "
+            f"{written(structure.minimum_cash)}, which leaves only "
+            f"{written(available)}; raise more on the new paper or move the "
+            f"takeout later"
         )
 
     base = structure.base_at(index)
@@ -1168,10 +1171,10 @@ def _acquisitions_by_period(
             left = remaining[draw.tranche]
             if draw.amount > left:
                 raise AddOnError(
-                    f"{event.label}: draws {draw.amount} on {draw.tranche}, which "
-                    f"is committed at {facility.commitment} and has {left} of it "
-                    f"left; a facility is a limit rather than a description of "
-                    f"where the money comes from"
+                    f"{event.label}: draws {written(draw.amount)} on {draw.tranche}, "
+                    f"which is committed at {written(facility.commitment)} and "
+                    f"has {written(left)} of it left; a facility is a limit "
+                    f"rather than a description of where the money comes from"
                 )
             remaining[draw.tranche] = left - draw.amount
     return scheduled
@@ -1203,9 +1206,10 @@ def _acquire(
     available = row.closing_cash - structure.minimum_cash
     if from_cash > available:
         raise AddOnError(
-            f"{event.label}: needs {from_cash} off a balance sheet holding "
-            f"{row.closing_cash} against a minimum of {structure.minimum_cash}, "
-            f"which leaves only {available}; fund more of it with debt or move it "
+            f"{event.label}: needs {written(from_cash)} off a balance sheet holding "
+            f"{written(row.closing_cash)} against a minimum of "
+            f"{written(structure.minimum_cash)}, which leaves only "
+            f"{written(available)}; fund more of it with debt or move it "
             f"to a period the business can pay for it in"
         )
 
@@ -1260,9 +1264,10 @@ def _recapitalise(
     available = row.closing_cash - structure.minimum_cash
     if event.from_cash > available:
         raise RecapitalisationError(
-            f"{event.label}: takes {event.from_cash} off a balance sheet holding "
-            f"{row.closing_cash} against a minimum of {structure.minimum_cash}, "
-            f"which leaves only {available} to pay out"
+            f"{event.label}: takes {written(event.from_cash)} off a balance sheet "
+            f"holding {written(row.closing_cash)} against a minimum of "
+            f"{written(structure.minimum_cash)}, which leaves only "
+            f"{written(available)} to pay out"
         )
 
     before = _leverage(row.closing_debt, row.closing_cash, earnings)
