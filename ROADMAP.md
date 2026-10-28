@@ -349,3 +349,31 @@ monthly ones, and two things stop them being trustworthy on a leveraged deal.
       invented centre, while flexing a deal *onto* a cap is allowed, because
       what a cap would cost a structure underwritten without one is the
       question most worth asking of it
+
+## Phase 16 — A front page, printed by the engine
+
+- [x] A generated site, not a written one: the generator returns strings and
+      touches no filesystem, so the tests call it directly and one thin entry
+      point writes `site/`
+- [x] The memo on it, rendered from the `Report` the engine assembles rather
+      than from the text the command line prints. Formatting happens where a
+      section is assembled, so the figures reaching HTML are the same strings a
+      terminal shows — a page that re-rounded them would be a second opinion
+      about the same number
+- [x] A sensitivity grid whose cells are rebuilds, shaded by rank, with the
+      figure printed in every cell. The shade says where a cell sits in the
+      measured range and nothing else, because a colour scale is not a number
+      and a committee reads the number
+- [x] An unreachable cell marked rather than left blank, since a blank cell in
+      a sensitivity table reads as zero, which on a return says something very
+      different from "this could not be valued"
+- [x] Every figure from `examples/evidence.py`, every count off the thing it
+      counts, and a test that fails in both directions
+- [x] The site built on every branch, not only when it publishes: a generator
+      that cannot run is a front page that silently stops being republished
+- [x] Eleven ways of breaking the page, eleven caught — after the first sweep
+      found that one of the assertions could not fail. It checked that
+      unreachable cells are marked, against a grid that reaches every cell, so
+      both sides were zero; removing the marking entirely changed no output.
+      That path and the breach flag are checked on a grid built to have both
+
