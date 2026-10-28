@@ -377,3 +377,26 @@ monthly ones, and two things stop them being trustworthy on a leveraged deal.
       both sides were zero; removing the marking entirely changed no output.
       That path and the breach flag are checked on a grid built to have both
 
+## Phase 17 — Amounts in messages read like amounts
+
+- [x] A single way to write an amount in a sentence: two decimal places,
+      thousands separators, no exponent, negative zero written as zero
+- [x] Every amount that reaches a raised message put through it, found by
+      walking the AST of `src/` for raises whose message is an f-string rather
+      than by fixing the one that was noticed — thirteen sites across six
+      modules
+- [x] The three values in messages that are *not* amounts left alone, because
+      writing them as money would be the same mistake pointing the other way: a
+      solve residual that says how far from settling the solve was (0.00 is the
+      one value it was not), a funding share that fires precisely because it is
+      not one, and a rate
+- [x] The whole memo for every shipped deal asserted free of a thirty-four
+      digit context — the layer the fault was visible at, and the only one that
+      would have caught it, because the break-even search catches a refusal and
+      *prints* it, and nothing below that layer knew those messages were being
+      read rather than raised
+- [x] Eight ways of putting it back, eight caught, after the first sweep of
+      eight caught six: the refinancing shortfall had no test at all and the
+      over-drawn commitment message is a different site from the tranche
+      validation that looked like it covered it
+
