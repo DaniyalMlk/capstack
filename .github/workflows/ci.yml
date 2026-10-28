@@ -52,6 +52,11 @@ jobs:
       - name: The front page's figures still hold
         run: python examples/evidence.py
 
+      # The site is generated from the same figures, so a generator that
+      # cannot run is a front page that silently stops being republished.
+      - name: The site builds
+        run: python docs/build.py
+
   package:
     name: Wheel installs and runs
     runs-on: ubuntu-latest

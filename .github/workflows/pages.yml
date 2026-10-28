@@ -1,0 +1,68 @@
+name: pages
+
+# Only from the default branch. A site published from a feature branch would
+# describe an engine nobody can install yet, which is a worse failure than
+# being a commit behind.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deployment at a time, and a newer one wins. Cancelling an in-flight
+# publish is safe because the site is rebuilt from scratch every run, so there
+# is no partial state for the next one to inherit.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build the site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      # Before building, not after. The generator will happily produce a page
+      # whose figures have drifted from the engine; these are what say they
+      # have not, and publishing first would mean the wrong numbers were public
+      # for however long the failure took to notice.
+      - name: The page agrees with the engine it describes
+        run: pytest -q tests/test_docs.py tests/test_readme_evidence.py
+
+      # No toolchain. The site is the standard library and the engine, which is
+      # the same argument the engine makes for having no runtime dependencies:
+      # a build that needs a bundler is a build that stops working.
+      - name: Build the site
+        run: python docs/build.py
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    name: publish
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    # The deploying job holds these two and nothing else: it checks out no
+    # code and runs none of its own.
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
