@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .money import ZERO, Money, Numeric, money
+from .money import ZERO, Money, Numeric, money, written
 from .transaction import Transaction
 
 __all__ = [
@@ -93,7 +93,8 @@ class TargetBookBalanceSheet:
             raise BalanceSheetError("goodwill must not be negative")
         if self.goodwill > self.total_assets:
             raise BalanceSheetError(
-                f"goodwill ({self.goodwill}) exceeds total assets ({self.total_assets})"
+                f"goodwill ({written(self.goodwill)}) exceeds total assets "
+                f"({written(self.total_assets)})"
             )
 
     @property
@@ -162,8 +163,9 @@ class OpeningBalanceSheet:
         difference = self.total_assets - self.total_liabilities_and_equity
         if difference != 0:
             raise UnbalancedBalanceSheetError(
-                f"assets ({self.total_assets}) do not equal liabilities and equity "
-                f"({self.total_liabilities_and_equity}); the difference is {difference}"
+                f"assets ({written(self.total_assets)}) do not equal liabilities and equity "
+                f"({written(self.total_liabilities_and_equity)}); the difference "
+                f"is {written(difference)}"
             )
 
     # -- Assets ----------------------------------------------------------
@@ -236,21 +238,22 @@ class OpeningBalanceSheet:
 
         if book.total_assets < valuation.existing_cash:
             raise BalanceSheetError(
-                f"the book balance sheet holds {book.total_assets} of assets but the "
-                f"valuation was struck on {valuation.existing_cash} of cash, which is more"
+                f"the book balance sheet holds {written(book.total_assets)} of assets but "
+                f"the valuation was struck on {written(valuation.existing_cash)} of "
+                f"cash, which is more"
             )
         if book.total_liabilities < valuation.existing_debt:
             raise BalanceSheetError(
-                f"the book balance sheet carries {book.total_liabilities} of liabilities "
-                f"but the valuation was struck on {valuation.existing_debt} of debt, which "
-                f"is more"
+                f"the book balance sheet carries {written(book.total_liabilities)} of "
+                f"liabilities but the valuation was struck on "
+                f"{written(valuation.existing_debt)} of debt, which is more"
             )
 
         non_cash_assets = book.total_assets - valuation.existing_cash
         if book.goodwill > non_cash_assets:
             raise BalanceSheetError(
-                f"goodwill ({book.goodwill}) exceeds the non-cash assets it sits inside "
-                f"({non_cash_assets})"
+                f"goodwill ({written(book.goodwill)}) exceeds the non-cash assets it sits "
+                f"inside ({written(non_cash_assets)})"
             )
         operating_liabilities = book.total_liabilities - valuation.existing_debt
 

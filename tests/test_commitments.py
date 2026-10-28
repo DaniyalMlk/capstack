@@ -214,7 +214,10 @@ class TestDrawingOnOne:
 
     def test_two_draws_that_overdraw_it_between_them_are_refused(self) -> None:
         """Each fits; the pair does not. Capacity is consumed in date order."""
-        with pytest.raises(AddOnError, match="has 60 of it left"):
+        # "60.00" rather than "60": amounts in messages are written to two
+        # places so that two figures compared in one sentence are rendered the
+        # same way.
+        with pytest.raises(AddOnError, match=r"has 60\.00 of it left"):
             run(
                 facility(),
                 acquisitions=[self.purchase(140, 1), self.purchase(120, 2)],

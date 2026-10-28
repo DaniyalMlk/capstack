@@ -57,7 +57,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from .debt import CapitalStructure, DebtSchedule
-from .money import ZERO, Money, Numeric, money, safe_div
+from .money import ZERO, Money, Numeric, money, safe_div, written
 from .operating import DEFAULT_NOL_USAGE_LIMIT, OperatingAssumptions, OperatingModel
 
 __all__ = [
@@ -740,7 +740,8 @@ def solve_levered(
             raise TaxPolicyError(
                 "this tax policy disagrees with the operating case it is being run "
                 f"against: with no interest at all, period {period.index} pays "
-                f"{row.cash_tax} here and {period.tax.cash_tax} in the projection. "
+                f"{written(row.cash_tax)} here and {written(period.tax.cash_tax)} in "
+                "the projection. "
                 "Build the policy with TaxPolicy.from_assumptions so the rate and "
                 "the loss limit come from the case itself."
             )
@@ -785,7 +786,7 @@ def solve_levered(
             raise TaxCircularityError(
                 f"the interest deduction and the debt it is charged on did not "
                 f"settle in {max_iterations} passes; the saving was still moving "
-                f"by {residual} when the solve stopped"
+                f"by {residual:.1e} when the solve stopped"
             )
         applied = flows
         schedule = run(applied)

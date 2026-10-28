@@ -67,7 +67,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 
 from .drivers import Driver
-from .money import ONE, ZERO, Money, Numeric, money, safe_div
+from .money import ONE, ZERO, Money, Numeric, money, safe_div, written
 from .operating import AcquiredStream
 
 __all__ = [
@@ -130,7 +130,7 @@ class Draw:
             raise RecapitalisationError("a draw has to name the tranche it is taken on")
         if self.amount <= 0:
             raise RecapitalisationError(
-                f"{self.tranche}: a draw of {self.amount} raises nothing"
+                f"{self.tranche}: a draw of {written(self.amount)} raises nothing"
             )
         if not (0 < self.issue_price <= 2):
             raise RecapitalisationError(
@@ -381,8 +381,9 @@ class AddOn:
             raise AddOnError("an acquisition needs a label")
         if self.ebitda <= 0:
             raise AddOnError(
-                f"{self.label}: an acquisition of a business earning {self.ebitda} is "
-                f"a purchase of losses; model it as a cost, not a multiple"
+                f"{self.label}: an acquisition of a business earning "
+                f"{written(self.ebitda)} is a purchase of losses; model it as a "
+                f"cost, not a multiple"
             )
         if self.multiple <= 0:
             raise AddOnError(
@@ -390,8 +391,8 @@ class AddOn:
             )
         if self.revenue is not None and self.revenue < self.ebitda:
             raise AddOnError(
-                f"{self.label}: revenue of {self.revenue} against EBITDA of "
-                f"{self.ebitda} is a margin above one"
+                f"{self.label}: revenue of {written(self.revenue)} against EBITDA of "
+                f"{written(self.ebitda)} is a margin above one"
             )
         if self.synergies < 0:
             raise AddOnError(
