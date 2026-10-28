@@ -57,10 +57,12 @@ addopts = "-q"
 [tool.mypy]
 python_version = "3.11"
 strict = true
-# `examples` is in here because examples/evidence.py gates the front page:
-# a script that decides whether a release is honest should be held to the same
-# standard as the library it measures.
-files = ["src", "tests", "examples"]
+# `examples` is in here because examples/evidence.py gates the front page: a
+# script that decides whether a release is honest should be held to the same
+# standard as the library it measures. `docs` is here for the same reason --
+# it renders those figures into the page, and an unchecked generator is a
+# front page nobody is type-checking.
+files = ["src", "tests", "examples", "docs"]
 warn_unreachable = true
 disallow_any_explicit = false
 

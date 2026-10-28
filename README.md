@@ -7,6 +7,12 @@ for, how the purchase is funded, what the operating case throws off, how the deb
 gets paid down, whether the covenants hold, and what the sponsor makes on the way
 out.
 
+**[daniyalmlk.github.io/capstack](https://daniyalmlk.github.io/capstack/)** —
+the front page, with [a memo it printed](https://daniyalmlk.github.io/capstack/memo.html)
+on it. The memo is the engine's own output for a deal file in `examples/`,
+generated when the page was built, and every figure on the site comes from the
+same gate as the table below.
+
 Every phase in `ROADMAP.md` is built, with the suite, the type checker and the
 linter running on every push. What is there: the numerics (exact money, day
 counts, period grids,
