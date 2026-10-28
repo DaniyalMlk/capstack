@@ -8,4 +8,5 @@ dist/
 .venv/
 venv/
 graphify-out/
+site/
 out/
