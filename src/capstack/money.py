@@ -30,6 +30,7 @@ __all__ = [
     "rate",
     "safe_div",
     "to_float",
+    "written",
 ]
 
 Money = Decimal
@@ -104,6 +105,34 @@ def quantize(value: Money, places: int = 2) -> Money:
         raise ValueError("places must not be negative")
     exponent = Decimal(1).scaleb(-places)
     return value.quantize(exponent, rounding=DISPLAY_ROUNDING)
+
+
+def written(value: Money) -> str:
+    """An amount, as it should be written in a sentence a person reads.
+
+    Exact arithmetic at thirty-four digits is the right thing to compute with
+    and the wrong thing to print. A balance that has been through a division
+    carries its whole context into an f-string, so a message could say a
+    business is "holding 12.00000000000000000000000000000000 against a minimum
+    of 12.0" -- two renderings of one number, side by side, in a sentence whose
+    entire job is to let a reader compare them. The same arithmetic gives
+    ``0E-32`` for a difference that is nil, and "which leaves only 0E-32" is
+    not a sentence about money.
+
+    So every amount that reaches a message goes through here: two decimal
+    places, thousands separators, no exponent, and negative zero written as
+    zero, because a reader is owed the number rather than the sign of the
+    rounding error underneath it.
+
+    This is for *amounts*. A rate is not one -- rounding 1.75% to two places
+    gives 0.02 -- and the rates that appear in messages are left to the
+    unit-aware renderer in ``sensitivity``.
+    """
+    rounded = quantize(value, 2)
+    if rounded == 0:
+        # `-0.00` is arithmetically correct and reads as a mistake.
+        rounded = abs(rounded)
+    return f"{rounded:,f}"
 
 
 def safe_div(numerator: Money, denominator: Money, *, default: Money | None = None) -> Money:
