@@ -256,7 +256,18 @@ def trailing_window(
     # ``inside`` is contiguous and ends at ``last`` whenever the periods handed
     # in are themselves contiguous, which a grid guarantees. It is short only at
     # the front, so completeness is a question about its first period alone.
-    complete = bool(inside) and inside[0].start == opens
+    #
+    # Asked the other way round, though. ``opens`` is derived from a closing
+    # date that may itself have been clamped to the end of its month, while the
+    # period boundaries were laid down from the grid's anchor, so the two
+    # clampings need not agree: a grid closing on the 31st puts a boundary on
+    # 29 February 2024, and a window asked for the twelve months to 28 February
+    # 2025 opens on the 28th. Twelve consecutive periods covering 365 days
+    # would fail an equality against that date. Stepping the interval forward
+    # from the first period's start instead applies the same clamping in the
+    # same direction the grid was built in, and a window is complete when that
+    # step reaches the close.
+    complete = bool(inside) and add_months(inside[0].start, months) <= last.end
     return TrailingWindow(
         periods=inside, opens=opens, closes=last.end, complete=complete
     )
