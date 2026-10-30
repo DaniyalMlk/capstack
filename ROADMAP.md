@@ -415,5 +415,7 @@ monthly ones, and two things stop them being trustworthy on a leveraged deal.
       and the periods each window holds asserted unchanged
 - [x] What it was costing, measured on a deal rather than described: a quarter
       of sweep held off, 83.72 more debt outstanding and 6.28 more interest
-- [ ] A known-gaps list, which this repository does not have and which is how
-      the last four defects in its siblings were found
+- [x] A known-gaps list, which this repository did not have and which is how
+      the last four defects in its siblings were found — paired with a test that
+      checks each gap is still a gap, so closing one breaks the list rather than
+      leaving a line behind that used to be true

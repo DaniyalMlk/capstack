@@ -1240,6 +1240,62 @@ Those are period numbers by design, so `maturity: 7` is the seventh year on an
 annual grid and the seventh quarter on a quarterly one, and a file moved between
 frequencies has to restate them.
 
+## Known gaps
+
+What an engine does not do is harder to find out than what it does, and reading
+the tests will not tell you: a suite says nothing about the cases nobody wrote.
+So here is the list, and `tests/test_known_gaps.py` pairs every line of it with
+a check that the thing is still missing. Building one of these breaks that test,
+which is the only way a list like this stays true — the alternative is a list of
+things that used to be absent, read as current.
+
+- **One tax rate, for the whole hold.** A covenant threshold is a series and can
+  tighten year by year; the tax rate is a single number on the policy. A regime
+  change part-way through a hold cannot be described at all, which for a
+  five-year hold spanning a rate change is not an edge case.
+- **No interest-rate hedge.** A floating tranche prices off the base-rate series
+  subject to its floor, and that is the whole of it. There is no cap, no collar
+  and no swap, so a structure that hedged three quarters of its floating
+  exposure is modelled as one that did not.
+- **No equity cure.** A breach reports the earnings increase that would cure it,
+  which is the number a sponsor negotiates against, but nothing injects the
+  equity and re-tests. A deal whose agreement allows cures is modelled as one
+  that breaches.
+- **One currency.** Amounts are exact decimals with no unit attached, so a
+  business earning in one currency and borrowing in another is out of scope
+  rather than approximated.
+- **No minority interest in the target.** The equity waterfall splits what the
+  sponsor and management hold; a stake left with a founder or a co-investor
+  outside the plan has nowhere to sit.
+- **The exit is one event for the whole stake.** No partial realisation, no
+  sell-down after a listing, so a hold that returned half its capital three
+  years early and the rest at the end reports the wrong duration and therefore
+  the wrong rate of return.
+- **A lease is an operating cost, not a liability in the stack.** Rent sits in
+  the operating case. Nothing capitalises it, so leverage is measured on
+  financial debt alone — which is one of the two conventions in circulation, and
+  the deal file cannot express the other.
+- **Cash sweeps out of operating cash flow and nothing else.** Mandatory
+  prepayment from a disposal or from insurance proceeds is not modelled, so a
+  structure whose agreement sweeps those is modelled as repaying later than it
+  would.
+- **Consideration is paid in full at close.** No earn-out, no deferred
+  consideration, no escrow. A purchase price contingent on performance is
+  modelled as a price paid up front, which overstates the capital at risk and
+  understates the return.
+- **Covenants are maintenance tests only.** Nothing tests a ratio at the moment
+  a deal wants to incur debt or pay a dividend, so the restriction that actually
+  binds a sponsor between reporting dates is absent.
+- **Working capital is a rate on revenue, not a days build.** One rate, applied
+  to sales. A business whose receivables and payables move in different
+  directions cannot be described, and a seasonal working capital swing can only
+  be approximated through the revenue shape.
+- **The levered tax basis is opt-in.** Servicing the debt out of cash flow taxed
+  on a levered basis is worth 90 to 189 basis points of return on the four
+  shipped deals, and it is still not the default. Making it one moves every
+  reported figure, including the hand-computed values in the worked example, so
+  it is a decision rather than a fix.
+
 ## Licence
 
 MIT
