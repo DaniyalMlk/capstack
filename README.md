@@ -1194,6 +1194,20 @@ year. The sweep falls back to the level the deal was priced at, which has to be 
 year of earnings too: falling back to the first entry of a trailing series would
 certify the opening structure at four times its leverage.
 
+What makes a date have a year behind it is a covering question, not a date
+match. Period boundaries are laid down from the grid's anchor and clamped to the
+end of each month, so a deal closing on 31 January 2024 has a boundary on
+29 February 2024 and the next year's on the 28th. The twelve months to
+28 February 2025 are twelve consecutive periods covering 365 days — and
+re-deriving the opening date from the closing one lands a day away from the
+boundary that is actually there. Asking instead whether stepping the interval
+forward from the window's first period reaches the close puts the clamping in
+the same direction the grid was built in, and a covered year is reported as
+one. The difference is a whole step of the sweep: on a quarterly grid closing
+30 November 2023 the deal above ends with 672.63 of debt and 118.82 of interest
+treated as a part year, against 588.91 and 112.54 certified — 83.72 more debt
+from a day-count convention.
+
 **An assumption is annual, and a period is a share of a year.** The same deal
 file has to describe the same business whether the year is reported once or
 twelve times, and that single requirement settles four questions that look
