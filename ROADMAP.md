@@ -400,3 +400,20 @@ monthly ones, and two things stop them being trustworthy on a leveraged deal.
       over-drawn commitment message is a different site from the tranche
       validation that looked like it covered it
 
+## Phase 18 — A year behind a date
+
+- [x] A trailing window judged complete by whether its periods cover the
+      interval, with the clamping applied in the direction the grid was built
+      in, rather than by an equality against a date re-derived from a closing
+      date that may itself have been clamped
+- [x] The three grids that trip it — a monthly and a quarterly grid whose
+      boundary falls on 29 February, and any window shorter than a year on a
+      grid anchored on the 31st — pinned as cases
+- [x] The one-directional claim swept rather than argued: every close day,
+      three frequencies, four window lengths, a window reported complete
+      checked against the shortest run of that many calendar months there is,
+      and the periods each window holds asserted unchanged
+- [x] What it was costing, measured on a deal rather than described: a quarter
+      of sweep held off, 83.72 more debt outstanding and 6.28 more interest
+- [ ] A known-gaps list, which this repository does not have and which is how
+      the last four defects in its siblings were found

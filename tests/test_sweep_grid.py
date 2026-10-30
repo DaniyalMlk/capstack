@@ -310,3 +310,69 @@ class TestThroughAnOperatingModel:
         assert schedule[0].sweep_rate in (money("0.75"), money("0.50"), ZERO)
         assert all(row.reconciles() for row in schedule)
         assert schedule.closing_debt < schedule.opening_debt
+
+
+class TestAClampedQuarterEndAndTheStep:
+    """What a part-year certification costs, measured on a deal.
+
+    The step a sweep grid lands on is set off the leverage certified at the
+    previous reporting date, and a date certifies only when a full year stands
+    behind it. A quarterly grid closing 30 November 2023 puts a boundary on
+    29 February 2024, so the four quarters to 28 February 2025 are a covered
+    year whose opening boundary is a day away from the date a twelve-month
+    window asked for. Reported short, that certification falls back to the
+    level the deal was priced at — which here is 200 of earnings against 60 of
+    actual trading, so the structure reads 2.28x instead of 7.61x and steps off
+    the sweep altogether for a quarter.
+    """
+
+    CLOSE = date(2023, 11, 30)
+
+    def schedule(self) -> DebtSchedule:
+        grid = PeriodGrid.build(self.CLOSE, years=3, frequency=Frequency.QUARTERLY)
+        structure = CapitalStructure.of(
+            (
+                Tranche.of(
+                    "Term Loan B",
+                    TrancheKind.TERM_LOAN,
+                    1000,
+                    cash_rate="0.05",
+                    floating=False,
+                ),
+            ),
+            interest_basis=InterestBasis.OPENING,
+            day_count=DayCount.ACT_365F,
+            sweep_grid=SweepGrid.of([("4.5", "0.75"), ("3.5", "0.25")]),
+        )
+        rows = list(grid)
+        return DebtSchedule.run(
+            structure,
+            rows,
+            [120] * len(rows),
+            ebitda=[60] * len(rows),
+            opening_ebitda=200,
+        )
+
+    def test_the_quarter_after_the_clamped_year_end_certifies(self) -> None:
+        row = next(
+            r for r in self.schedule() if r.period.end == date(2025, 5, 30)
+        )
+        assert row.certified_leverage is not None
+        assert round(row.certified_leverage, 4) == money("7.6123")
+        assert row.sweep_rate == money("0.75")
+        assert row.sweep_repayment > ZERO
+
+    def test_the_quarter_either_side_is_unaffected(self) -> None:
+        by_date = {r.period.end: r for r in self.schedule()}
+        assert by_date[date(2025, 2, 28)].sweep_rate == money("0.75")
+        assert by_date[date(2025, 8, 30)].sweep_rate == money("0.75")
+
+    def test_what_the_part_year_was_costing(self) -> None:
+        # Certified throughout, the deal repays to 588.91 and pays 112.54 of
+        # interest. Treating the clamped year as a part year held the sweep off
+        # for one quarter, which left 672.63 outstanding at the end — 83.72
+        # more debt — and 118.82 of interest, 6.28 more, on a deal where
+        # nothing but a day-count convention had changed.
+        rows = self.schedule()
+        assert round(rows[-1].closing_debt, 2) == money("588.91")
+        assert round(sum((r.cash_interest for r in rows), ZERO), 2) == money("112.54")

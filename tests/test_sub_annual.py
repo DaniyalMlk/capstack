@@ -11,7 +11,7 @@ comparison against the same case measured a different way.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -21,7 +21,13 @@ from capstack.debt import CapitalStructure, DebtSchedule, Tranche, TrancheKind
 from capstack.drivers import Driver, compounded_over, within_year_weights
 from capstack.money import ONE, ZERO, is_close, money
 from capstack.operating import OperatingAssumptions, OperatingModel
-from capstack.periods import Frequency, Period, PeriodGrid, trailing_window
+from capstack.periods import (
+    Frequency,
+    Period,
+    PeriodGrid,
+    add_months,
+    trailing_window,
+)
 
 CLOSE = date(2026, 1, 1)
 YEARS = 3
@@ -217,6 +223,93 @@ class TestTheTrailingWindow:
             True,
         ]
         assert grid.trailing(4).indices == (1, 2, 3, 4)
+
+    def test_a_covered_year_is_covered_whatever_the_end_was_clamped_to(self) -> None:
+        """Twelve consecutive months are a year even across a leap February.
+
+        A grid closing on the 31st lays every boundary down from that day,
+        clamped to the end of each month, so February 2024 ends on the 29th and
+        February 2025 on the 28th. A window asked for the twelve months to
+        28 February 2025 therefore opens a day after the boundary it is looking
+        for. The periods are all there and span 365 days; only the arithmetic
+        that re-derives the opening date from the clamped closing date says
+        otherwise.
+        """
+        grid = PeriodGrid.build(date(2024, 1, 31), 2, Frequency.MONTHLY)
+        positions = {p.end: i for i, p in enumerate(grid)}
+        across_the_leap = grid.trailing(positions[date(2025, 2, 28)])
+        assert len(across_the_leap) == 12
+        assert across_the_leap.days == 365
+        assert across_the_leap.complete
+        # The months either side are the control: nothing about them is clamped
+        # and they were always reported complete.
+        assert grid.trailing(positions[date(2025, 1, 31)]).complete
+        assert grid.trailing(positions[date(2025, 3, 31)]).complete
+        # The first eleven windows are genuinely short and stay short.
+        assert [grid.trailing(i).complete for i in range(11)] == [False] * 11
+
+    def test_four_quarters_across_a_leap_february_are_a_year(self) -> None:
+        grid = PeriodGrid.build(date(2023, 11, 30), 2, Frequency.QUARTERLY)
+        positions = {p.end: i for i, p in enumerate(grid)}
+        window = grid.trailing(positions[date(2025, 2, 28)])
+        assert window.indices == (2, 3, 4, 5)
+        assert window.days == 365
+        assert window.complete
+
+    def test_a_window_shorter_than_a_year_is_not_clamped_out_of_shape(self) -> None:
+        """One month ending a 30-day month is still one month.
+
+        Asked for an interval that is not a whole number of years, the
+        disagreement between the two clampings stops being occasional: every
+        month following a 31-day one opens on the 30th of the month before
+        while the boundary sits on the 31st.
+        """
+        grid = PeriodGrid.build(date(2025, 1, 31), 1, Frequency.MONTHLY)
+        for position, period in enumerate(grid):
+            window = grid.trailing(position, 1)
+            assert window.indices == (period.index,), period.end
+            assert window.complete, period.end
+
+    def test_no_window_is_reported_complete_that_is_not(self) -> None:
+        """The sweep behind the one-directional claim.
+
+        Over every day a close can fall on, three frequencies and four window
+        lengths. A window reported complete has to cover at least as many days
+        as the shortest run of that many calendar months there is — 365 for a
+        year, 181 for six months, 89 for three, 28 for one — which is a bound
+        the window arithmetic knows nothing about. Alongside it, the periods a
+        window contains are asserted unchanged, so a fix that bought
+        completeness by widening the window would fail here rather than pass.
+        """
+        shortest_span = {1: 28, 3: 89, 6: 181, 12: 365}
+        checked = 0
+        complete_windows = 0
+        for day in range(31):
+            close = date(2023, 12, 1) + timedelta(days=day)
+            for frequency in (
+                Frequency.MONTHLY,
+                Frequency.QUARTERLY,
+                Frequency.SEMI_ANNUAL,
+            ):
+                grid = PeriodGrid.build(close, 3, frequency)
+                for months, floor in shortest_span.items():
+                    for position, period in enumerate(grid):
+                        window = grid.trailing(position, months)
+                        opens = add_months(period.end, -months)
+                        assert window.indices == tuple(
+                            p.index
+                            for p in grid
+                            if p.start >= opens and p.end <= period.end
+                        )
+                        if window.complete:
+                            assert window.days >= floor, (period.end, months)
+                            complete_windows += 1
+                        checked += 1
+        assert checked == 31 * 4 * (36 + 12 + 6)
+        # 5,239 of the 6,696 windows cover their interval. The equality this
+        # replaced reported 5,172, so 67 covered windows in this sweep alone
+        # were being handed to a covenant test as part years.
+        assert complete_windows == 5239
 
     def test_a_window_never_reaches_past_the_grid(self) -> None:
         grid = PeriodGrid.build(CLOSE, 1, Frequency.ANNUAL)
