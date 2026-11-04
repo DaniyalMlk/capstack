@@ -109,16 +109,29 @@ def brent_root(
 
     Convergence is declared once the remaining bracket is narrower than
     ``(xtol + rtol * abs(x)) / 2``, so the two tolerances are the absolute and
-    relative halves of one test and the larger of them decides. Which one that
-    is depends on the magnitude of the root, and in this package it is always
-    ``xtol``: at the default pair the relative term is 0.09% of the absolute one
-    at ``abs(x) == 1`` and 8.9% at ``abs(x) == 100``, reaching parity only
-    around ``abs(x) == 1e3``. Every bracket here is a rate — ``fees`` solves
-    over ``[0, MAXIMUM_PERIOD_RATE]`` and :func:`irr_periodic` over
-    ``[RATE_FLOOR, RATE_CEILING]`` with the ceiling at 100 — so ``rtol`` cannot
-    move a result this package produces, and raising it is not a way to loosen
-    one. Lower ``xtol`` for that. ``rtol`` earns its keep only if the solver is
-    pointed at a quantity measured in thousands.
+    relative halves of one test and the larger term decides. At the two defaults
+    together the absolute half dominates everywhere this package solves: the
+    relative term is 0.09% of the absolute one at ``abs(x) == 1`` and 8.9% at
+    ``abs(x) == 100``, reaching parity only around ``abs(x) == 1e3``, and every
+    bracket here is a rate — ``fees`` solves over ``[0, MAXIMUM_PERIOD_RATE]``
+    and :func:`irr_periodic` over ``[RATE_FLOOR, RATE_CEILING]`` with the
+    ceiling at 100. So the default pair behaves as a purely absolute tolerance,
+    and lowering ``xtol`` is what tightens a result in this package.
+
+    That is a statement about the defaults, not about ``rtol``, which is a live
+    knob: raising it loosens the answer at any magnitude. On ``x**2 - 2`` over
+    ``[0, 2]`` the returned root first moves at ``rtol`` near 1e-6, and on
+    ``(x - 0.3)**3`` over ``[-1, 2]`` — where the function is flat around the
+    root and the bracket closes slowly — it moves by 9e-15. The crossover is not
+    simply ``xtol / abs(x)``, because which term binds depends on the iteration
+    path the interpolation takes rather than on the root alone.
+
+    One warning for anyone testing this. A tolerance cannot be observed on a
+    linear ``f`` at all: the secant step is exact on a line, so the method
+    returns before either half of the test is consulted, and a sweep of ``rtol``
+    over fourteen decades on ``x - c`` yields one single answer. A fixture built
+    to measure a tolerance has to be nonlinear or it is blind to its own
+    subject.
 
     All three options are bounded, because a tolerance that cannot be met turns
     a sound bracket into an apparent convergence failure instead of an error
