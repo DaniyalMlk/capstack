@@ -7,9 +7,11 @@ import pytest
 from capstack.daycount import DayCount
 from capstack.money import money
 from capstack.returns import (
+    RTOL_FLOOR,
     AmbiguousIRRError,
     CashFlow,
     CashFlowStream,
+    DidNotConvergeError,
     NoSignChangeError,
     brent_root,
     cagr,
@@ -46,6 +48,97 @@ class TestBrentRoot:
         # iteration; Brent falls back to bisection and still lands.
         root = brent_root(lambda x: (x - 0.3) ** 3, -1.0, 2.0)
         assert abs(root - 0.3) < 1e-4
+
+
+def _quadratic(x: float) -> float:
+    return x * x - 2.0
+
+
+def _cube(x: float) -> float:
+    return (x - 0.3) ** 3
+
+
+def _line(x: float) -> float:
+    return x - math.sqrt(2)
+
+
+class TestBrentRootTolerances:
+    """The three keyword options: refused where they cannot be met, honoured
+    where they can.
+
+    Each is chosen here with a value that moves the answer, which is the point.
+    Passing an option and checking nothing broke does not establish that the
+    option does anything, and all three spent the repository's life so far at
+    their defaults.
+    """
+
+    def test_a_non_positive_xtol_is_refused_rather_than_draining_the_budget(self) -> None:
+        # The failure this replaces: xtol=0.0 made the exit test abs(sbis) <
+        # delta unsatisfiable and the fallback step xcur += delta stop moving,
+        # so a bracket holding a root raised DidNotConvergeError -- documented
+        # as an exhausted budget inside a valid bracket, which blames the
+        # bracket. A negative xtol did the same and pointed the fallback step
+        # away from the root as well.
+        for bad in (0.0, -1e-6, -1.0, float("nan")):
+            with pytest.raises(ValueError, match="xtol must be positive"):
+                brent_root(_quadratic, 0.0, 2.0, xtol=bad)
+
+    def test_an_rtol_below_the_representable_floor_is_refused(self) -> None:
+        # Below four epsilons, rtol * abs(x) is finer than the gap between the
+        # floats either side of x, so the relative half of the test asks for a
+        # distance that does not exist. It used to be accepted and do nothing.
+        assert repr(RTOL_FLOOR) == "8.881784197001252e-16"
+        for bad in (0.0, 1e-30, 1e-17, float("nan")):
+            with pytest.raises(ValueError, match="rtol must be at least"):
+                brent_root(_quadratic, 0.0, 2.0, rtol=bad)
+
+    def test_the_shipped_default_sits_just_above_that_floor(self) -> None:
+        # The guard has to admit the value the function already defaults to, or
+        # every existing call site breaks. 8.9e-16 clears 8.8817...e-16, and the
+        # margin is thin enough to be worth pinning.
+        assert RTOL_FLOOR <= 8.9e-16
+        assert brent_root(_quadratic, 0.0, 2.0, rtol=8.9e-16) == brent_root(_quadratic, 0.0, 2.0)
+
+    def test_a_max_iter_below_one_is_a_caller_error_not_a_drained_budget(self) -> None:
+        for bad in (0, -1, -200):
+            with pytest.raises(ValueError, match="max_iter must be at least 1"):
+                brent_root(_quadratic, 0.0, 2.0, max_iter=bad)
+
+    def test_choosing_max_iter_bounds_the_work(self) -> None:
+        # Measured on this bracket: seven iterations are not enough and eight
+        # are, so the budget is genuinely consulted rather than decorative.
+        with pytest.raises(DidNotConvergeError, match="no root after 7 iterations"):
+            brent_root(_quadratic, 0.0, 2.0, max_iter=7)
+        assert abs(brent_root(_quadratic, 0.0, 2.0, max_iter=8) - math.sqrt(2)) < 1e-12
+
+    def test_choosing_xtol_loosens_the_answer_by_the_amount_asked_for(self) -> None:
+        tight = brent_root(_quadratic, 0.0, 2.0)
+        loose = brent_root(_quadratic, 0.0, 2.0, xtol=1e-3)
+        assert abs(tight - math.sqrt(2)) < 1e-13  # measured 4.13e-14
+        assert abs(loose - math.sqrt(2)) < 1e-3  # measured 1.42e-04, inside its own bound
+        # Both halves: looser than the default, not merely different from it.
+        assert abs(loose - math.sqrt(2)) > abs(tight - math.sqrt(2))
+
+    def test_rtol_is_a_live_knob_and_not_only_a_default(self) -> None:
+        # The claim this replaces was that rtol could not move a result here.
+        # It can, at ordinary magnitudes: raising it to 1e-6 moves the root of
+        # x^2-2 by 2.4e-07, and the cube -- flat around its root, so the bracket
+        # closes slowly and the relative term binds sooner -- moves at 9e-15.
+        assert brent_root(_quadratic, 0.0, 2.0, rtol=1e-6) != brent_root(_quadratic, 0.0, 2.0)
+        assert brent_root(_cube, -1.0, 2.0, rtol=9e-15) != brent_root(_cube, -1.0, 2.0)
+
+    def test_a_linear_fixture_cannot_observe_either_tolerance(self) -> None:
+        # Recorded because measuring the two tolerances on a line is how the
+        # first reading of rtol came out wrong. The secant step is exact on a
+        # line, so the method returns before either half of the convergence
+        # test is reached, and decades of either tolerance give one answer. A
+        # fixture built to measure a tolerance has to be nonlinear.
+        assert len({brent_root(_line, 0.0, 2.0, rtol=r) for r in (RTOL_FLOOR, 1e-10, 1e-6, 1e-1)}) == 1
+        assert len({brent_root(_line, 0.0, 2.0, xtol=x) for x in (1e-12, 1e-6, 1e-3, 1.0)}) == 1
+        # The same xtol sweep on a nonlinear function does separate, which is
+        # what makes the line's single answer a property of the line rather
+        # than of the sweep.
+        assert len({brent_root(_quadratic, 0.0, 2.0, xtol=x) for x in (1e-12, 1e-6, 1e-3, 1.0)}) > 1
 
 
 class TestNPVPeriodic:
