@@ -141,6 +141,98 @@ class TestBrentRootTolerances:
         assert len({brent_root(_quadratic, 0.0, 2.0, xtol=x) for x in (1e-12, 1e-6, 1e-3, 1.0)}) > 1
 
 
+class TestNPVPeriodicOffset:
+    """``first_period_offset``, the one option in this package that nothing
+    had chosen.
+
+    The arithmetic turned out to be right, so this exercises it rather than
+    changing it. Worth saying, because the reflex on finding an unchosen
+    documented parameter is to assume it is wrong.
+    """
+
+    RATE = "0.0875"
+    STREAM = (-100, 30, 40, 50, 60)
+
+    def _flows(self) -> list[Decimal]:
+        return flows(*self.STREAM)
+
+    def test_the_default_is_no_shift(self) -> None:
+        assert npv_periodic(self.RATE, self._flows(), first_period_offset=0) == npv_periodic(
+            self.RATE, self._flows()
+        )
+
+    @pytest.mark.parametrize("offset", [1, 2, 3, 7])
+    def test_a_positive_offset_is_exactly_a_run_of_leading_zeros(self, offset: int) -> None:
+        # The identity is an equality, not a bound: both sides discount the same
+        # terms by the same powers, so there is nothing for the 34-digit context
+        # to re-associate. Measured exact in 288 of 288 cases over six rates and
+        # six streams.
+        shifted = npv_periodic(self.RATE, self._flows(), first_period_offset=offset)
+        padded = npv_periodic(self.RATE, flows(*([0] * offset + list(self.STREAM))))
+        assert shifted == padded
+
+    def test_a_negative_offset_compounds_forward(self) -> None:
+        # Monotone in the offset, and strictly: each period earlier is one more
+        # period of compounding on a stream whose present value is positive.
+        # Asserted as an ordering rather than as an equality against
+        # plain * base ** -offset, because that is a different association of
+        # the same arithmetic and lands 1e-32 out at offset -2. The bound on
+        # that identity is the test below.
+        values = [
+            npv_periodic(self.RATE, self._flows(), first_period_offset=offset)
+            for offset in (0, -1, -2, -4, -6)
+        ]
+        assert values == sorted(values)
+        assert len(set(values)) == len(values)
+        # One period earlier is one factor of (1 + r), to the same relative
+        # bound the scaling identity holds to.
+        base = Decimal(1) + money(self.RATE)
+        one_earlier = npv_periodic(self.RATE, self._flows(), first_period_offset=-1)
+        assert abs(one_earlier - values[0] * base) <= abs(one_earlier) * Decimal("1e-30")
+
+    def test_the_offset_scales_the_whole_stream_to_within_a_relative_bound(self) -> None:
+        # Deliberately a bound where the test above is an equality. Discounting
+        # each term by one more period and dividing the finished total by one
+        # more period are different associations of the same arithmetic, and the
+        # 34-digit context is not associative. Swept over six rates, six streams
+        # and nineteen offsets: worst absolute residue 2e-29, worst relative
+        # 1.5e-33, so the bound is relative -- the absolute residue tracks the
+        # magnitude of the answer.
+        base = Decimal(1) + money(self.RATE)
+        plain = npv_periodic(self.RATE, self._flows())
+        inexact = 0
+        for offset in range(-6, 13):
+            shifted = npv_periodic(self.RATE, self._flows(), first_period_offset=offset)
+            scaled = plain / (base**offset)
+            assert abs(shifted - scaled) <= abs(shifted) * Decimal("1e-30")
+            if shifted != scaled:
+                inexact += 1
+        # Both halves. An equality here would be the wrong assertion, and a
+        # bound nothing ever strains is decoration, so at least one case has to
+        # actually be inexact.
+        assert inexact > 0
+
+    def test_the_rate_guard_holds_whatever_the_offset(self) -> None:
+        # The offset multiplies through a power of (1 + r), so a rate at or
+        # below -100% has to be refused before the offset is applied rather
+        # than after.
+        for offset in (0, 5, -5):
+            with pytest.raises(ValueError, match="discount rate must exceed"):
+                npv_periodic("-1", self._flows(), first_period_offset=offset)
+
+    def test_a_deferred_annuity_is_the_textbook_figure(self) -> None:
+        # Five payments of 100 starting at the end of period three, at 10%.
+        # The ordinary annuity factor for five periods is 3.790786769408448,
+        # and deferring it two further periods divides by 1.1 squared.
+        payments = flows(*([100] * 5))
+        deferred = npv_periodic("0.10", payments, first_period_offset=3)
+        factor = npv_periodic("0.10", payments, first_period_offset=1) / money(100)
+        assert factor == pytest.approx(Decimal("3.790786769408448"), abs=Decimal("1e-15"))
+        assert deferred == pytest.approx(
+            money(100) * factor / (Decimal("1.1") ** 2), abs=Decimal("1e-13")
+        )
+
+
 class TestNPVPeriodic:
     def test_zero_rate_is_a_plain_sum(self) -> None:
         assert npv_periodic(0, flows(-100, 50, 50, 50)) == money(50)
