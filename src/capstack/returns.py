@@ -27,6 +27,7 @@ bracket, which is what makes it the right choice over Newton here.
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -82,6 +83,14 @@ class DidNotConvergeError(IRRError):
 # Root finding
 # --------------------------------------------------------------------------
 
+#: The smallest relative tolerance the convergence test can actually use. Below
+#: this, ``rtol * abs(x)`` asks for a distance finer than the spacing between
+#: the floats either side of ``x``, so the relative half of the test is asking
+#: for something that does not exist. Four epsilons is the conventional floor,
+#: and it is why the default sits just above it rather than at zero.
+RTOL_FLOOR = 4.0 * sys.float_info.epsilon
+
+
 def brent_root(
     f: Callable[[float], float],
     lower: float,
@@ -97,7 +106,37 @@ def brent_root(
     opposite signs. Given that, the method always converges, because it falls
     back to bisection whenever interpolation would step outside the bracket or
     fail to shrink it fast enough.
+
+    Convergence is declared once the remaining bracket is narrower than
+    ``(xtol + rtol * abs(x)) / 2``, so the two tolerances are the absolute and
+    relative halves of one test and the larger of them decides. Which one that
+    is depends on the magnitude of the root, and in this package it is always
+    ``xtol``: at the default pair the relative term is 0.09% of the absolute one
+    at ``abs(x) == 1`` and 8.9% at ``abs(x) == 100``, reaching parity only
+    around ``abs(x) == 1e3``. Every bracket here is a rate — ``fees`` solves
+    over ``[0, MAXIMUM_PERIOD_RATE]`` and :func:`irr_periodic` over
+    ``[RATE_FLOOR, RATE_CEILING]`` with the ceiling at 100 — so ``rtol`` cannot
+    move a result this package produces, and raising it is not a way to loosen
+    one. Lower ``xtol`` for that. ``rtol`` earns its keep only if the solver is
+    pointed at a quantity measured in thousands.
+
+    All three options are bounded, because a tolerance that cannot be met turns
+    a sound bracket into an apparent convergence failure instead of an error
+    about the tolerance. A non-positive ``xtol`` is the sharpest case: it makes
+    the exit test ``abs(sbis) < delta`` unsatisfiable and the fallback step
+    ``xcur += delta`` stop moving, so the iteration budget drains inside a
+    bracket that held a root the whole time.
     """
+    if not xtol > 0.0:
+        raise ValueError(f"xtol must be positive, not {xtol!r}")
+    if not rtol >= RTOL_FLOOR:
+        raise ValueError(
+            f"rtol must be at least {RTOL_FLOOR:g}, not {rtol!r}: below that the "
+            "relative tolerance is finer than the spacing of the floats it measures"
+        )
+    if max_iter < 1:
+        raise ValueError(f"max_iter must be at least 1, not {max_iter!r}")
+
     xpre, xcur = float(lower), float(upper)
     fpre, fcur = f(xpre), f(xcur)
 
