@@ -419,3 +419,29 @@ monthly ones, and two things stop them being trustworthy on a leveraged deal.
       the last four defects in its siblings were found — paired with a test that
       checks each gap is still a gap, so closing one breaks the list rather than
       leaving a line behind that used to be true
+
+## Phase 19 — Options nobody had chosen
+
+- [x] `brent_root`'s three keyword options bounded, because an unmeetable
+      tolerance turned a sound bracket into an apparent convergence failure:
+      `xtol=0.0` and any negative `xtol` make the exit test unsatisfiable and
+      the fallback step stop moving, so the budget drained and the error named
+      the bracket rather than the tolerance
+- [x] The floor for `rtol` set at the representable one — four epsilons, below
+      which the relative term asks for a distance finer than the spacing of the
+      floats it measures — so the shipped default is admitted unchanged and no
+      result in the package moves
+- [x] A `max_iter` below one reported as a caller error rather than as a budget
+      that drained, and every one of the three guards written so a NaN is
+      refused by the same comparison
+- [x] Each option then chosen by a test with a value that moves the answer,
+      rather than passed and ignored: the default lands 4.13e-14 from the root
+      and `xtol=1e-3` lands 1.42e-04 from it, seven iterations do not converge
+      on the bracket where eight do, and `rtol` moves the quadratic at 1e-6 and
+      the flat cube at 9e-15
+- [x] The first reading of `rtol` corrected rather than quietly dropped: it was
+      measured on linear functions, where the secant step is exact and the
+      method returns before either tolerance is consulted, so the fixture was
+      blind to its own subject. The claim that survives is about the defaults —
+      the absolute half dominates over every bracket here, all of them rates
+      bounded by 100 — and the trap is recorded as a test
