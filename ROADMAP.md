@@ -445,3 +445,31 @@ monthly ones, and two things stop them being trustworthy on a leveraged deal.
       blind to its own subject. The claim that survives is about the defaults —
       the absolute half dominates over every bracket here, all of them rates
       bounded by 100 — and the trap is recorded as a test
+
+## Phase 20 — A gate for the options, and the one it found
+
+- [x] The unchosen-option probe from the sibling repositories, which this
+      repository did not have: 181 defaulted parameters and fields over 71
+      files, against 453 signatures, each required to be supplied by something
+      outside the module that declares it
+- [x] Its result rule read off the source rather than listed, so a type named
+      in any public return annotation has its defaults treated as slots —
+      `DebtPeriod`'s call premium and damping flag are not offers — and a type
+      that stops being returned joins the gate with no edit to the gate
+- [x] The one option it reports, `npv_periodic(first_period_offset=)`, chosen
+      for the first time. The arithmetic was correct, so it is exercised rather
+      than changed: a positive offset is exactly a run of leading zeros,
+      measured exact in 288 of 288 cases
+- [x] That identity an equality and the scaling identity a bound, on purpose —
+      per-term discounting and dividing the finished total are different
+      associations and the 34-digit context is not associative. Worst residue
+      over six rates, six streams and nineteen offsets: 2e-29 absolute, 1.5e-33
+      relative, so the bound is relative and both halves are asserted
+- [x] The first draft of the negative-offset case made that mistake itself, as
+      an equality that fails at offset -2 by 1e-32; it is now a strict ordering
+      plus the one-period identity to the same bound
+- [x] The gate's own weakness measured and written into it rather than left to
+      be found again: supply is counted by parameter name anywhere in the tree,
+      so `tolerance=tolerance` forwarded down a call chain reads as a caller
+      choosing. Keying supply on the owning callable raises the count here from
+      one to twenty-four, and that stricter probe is its own piece of work
