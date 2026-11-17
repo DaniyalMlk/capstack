@@ -14,7 +14,6 @@ for.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
 
 from .money import ONE, ZERO, Money, Numeric, money, safe_div, written
 
@@ -30,11 +29,6 @@ __all__ = [
 
 class UnbalancedTransactionError(ValueError):
     """Sources and uses do not agree."""
-
-
-class LineKind(Enum):
-    SOURCE = "source"
-    USE = "use"
 
 
 @dataclass(frozen=True, slots=True)
