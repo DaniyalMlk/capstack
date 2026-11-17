@@ -56,10 +56,8 @@ NOT_SURFACE = frozenset({"cli", "__main__"})
 NO_DUNDER_ALL: frozenset[str] = frozenset()
 
 #: Names in the root's ``__all__`` that no module declares. ``__version__`` is
-#: assigned in ``__init__.py`` itself. ``rescale`` is defined in ``money`` and
-#: exported from the root, but ``money.__all__`` omits it: pinned here so that
-#: the omission is visible rather than tolerated.
-ROOT_ONLY = frozenset({"__version__", "rescale"})
+#: assigned in ``__init__.py`` itself, so it is the one legitimate entry.
+ROOT_ONLY = frozenset({"__version__"})
 
 
 def submodules() -> dict[str, ModuleType]:

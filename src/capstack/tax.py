@@ -63,6 +63,7 @@ from .operating import DEFAULT_NOL_USAGE_LIMIT, OperatingAssumptions, OperatingM
 __all__ = [
     "DEFAULT_INTEREST_LIMIT_RATE",
     "DEFAULT_SOLVE_TOLERANCE",
+    "MAX_SOLVE_ITERATIONS",
     "EarningsBase",
     "InterestDeduction",
     "InterestLimit",

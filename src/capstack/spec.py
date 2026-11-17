@@ -65,6 +65,7 @@ from .tax import (
 from .transaction import DebtFunding, EntryValuation, LineItem, Transaction
 
 __all__ = [
+    "ZERO_RATE",
     "Deal",
     "DealSpecError",
     "EquityPlan",

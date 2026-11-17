@@ -53,6 +53,8 @@ from .spec import Deal
 from .tax import EarningsBase, InterestLimit, LeveredSolution
 
 __all__ = [
+    "BISECTION_STEPS",
+    "CELL_FAILURES",
     "Axis",
     "Breakeven",
     "Case",

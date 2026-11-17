@@ -55,6 +55,7 @@ __all__ = [
     "Distribution",
     "ExitValuation",
     "Outcome",
+    "Rate",
     "Security",
     "SecurityKind",
     "SecurityOutcome",
