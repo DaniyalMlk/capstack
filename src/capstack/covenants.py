@@ -61,6 +61,9 @@ from .operating import OperatingModel
 from .periods import Period, TrailingWindow, trailing_window
 
 __all__ = [
+    "DENOMINATOR_COLLAPSED",
+    "NOTHING_AT_RISK",
+    "NO_YEAR_YET",
     "Certification",
     "Covenant",
     "CovenantObservation",
