@@ -491,3 +491,24 @@ monthly ones, and two things stop them being trustworthy on a leveraged deal.
       anything reachable from the root is itself reachable from the root. On the
       previous root it reported seven signatures, two returning a
       `TrailingWindow` and a third taking one
+
+## Phase 22 — Every module declares what it defines
+
+- [x] Three names removed that had been defined and never read since the
+      commit that added them: `transaction.LineKind`, and `sensitivity`'s
+      `NO_SHIFT` and `UNCHANGED`
+- [x] The funding-table labels `SourcesAndUses.source` and `.use` look lines up
+      by, and the three notes `CovenantObservation.note` carries when a ratio
+      has no value, declared and at the root, so a caller need not retype
+      `"Sponsor equity"`
+- [x] Twenty-two documented defaults, solver bounds and precision constants
+      declared — most the default of a public parameter, or a bound a public
+      docstring names, as `irr_periodic` names `[RATE_FLOOR, RATE_CEILING]`
+- [x] The surface gate an equality: the root is exactly the union of the
+      modules' declarations plus `__version__`, and each module's `__all__`
+      holds every public top-level name its source defines, read with `ast`
+      because 31 of the 34 are bare strings, numbers, tuples or `Decimal`s
+      that carry no `__module__` naming capstack
+- [x] Two cases the equality cannot see, each its own check: one name declared
+      by two modules, and a public name bound inside a top-level block where
+      the probe does not look
