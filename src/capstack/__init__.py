@@ -8,14 +8,21 @@ from .balance_sheet import (
     UnbalancedBalanceSheetError,
 )
 from .covenants import (
+    Certification,
     Covenant,
     CovenantObservation,
     CovenantReport,
     Direction,
     Measure,
 )
-from .daycount import DayCount, year_fraction
+from .daycount import (
+    DayCount,
+    days_between,
+    is_leap_year,
+    year_fraction,
+)
 from .debt import (
+    AmortisationBasis,
     CapitalStructure,
     CircularityError,
     DebtPeriod,
@@ -27,7 +34,11 @@ from .debt import (
     TrancheKind,
     TranchePeriod,
 )
-from .drivers import Driver
+from .drivers import (
+    Driver,
+    compounded_over,
+    within_year_weights,
+)
 from .events import (
     AddOn,
     AddOnError,
@@ -41,6 +52,7 @@ from .events import (
     RefinancingError,
     RefinancingOutcome,
 )
+from .fees import FeeMethod, FeePeriod, FeeSchedule, TrancheFees, effective_rate
 from .incentive import (
     IncentiveError,
     OptionPool,
@@ -50,7 +62,21 @@ from .incentive import (
     Vesting,
     settle_pool,
 )
-from .money import Money, allocate_pro_rata, money, quantize, rate, rescale
+from .money import (
+    ONE,
+    ZERO,
+    Money,
+    Numeric,
+    allocate_pro_rata,
+    is_close,
+    money,
+    quantize,
+    rate,
+    rescale,
+    safe_div,
+    to_float,
+    written,
+)
 from .operating import (
     AcquiredStream,
     OperatingAssumptions,
@@ -69,14 +95,30 @@ from .outcome import (
     SecurityOutcome,
     default_securities,
 )
-from .periods import Frequency, Period, PeriodGrid
-from .report import Report, Section
+from .periods import (
+    Frequency,
+    Period,
+    PeriodGrid,
+    TrailingWindow,
+    add_months,
+    end_of_month,
+    trailing_window,
+)
+from .report import (
+    Line,
+    Report,
+    Section,
+    Table,
+    prepare,
+)
 from .returns import (
     AmbiguousIRRError,
     CashFlow,
     CashFlowStream,
+    DidNotConvergeError,
     IRRError,
     NoSignChangeError,
+    brent_root,
     cagr,
     irr_periodic,
     moic,
@@ -92,6 +134,7 @@ from .sensitivity import (
     Metric,
     SensitivityError,
     Unit,
+    format_value,
     solve,
 )
 from .spec import (
@@ -106,16 +149,22 @@ from .spec import (
 )
 from .tax import (
     DEFAULT_INTEREST_LIMIT_RATE,
+    DEFAULT_SOLVE_TOLERANCE,
     EarningsBase,
     InterestDeduction,
     InterestLimit,
+    LeveredSolution,
     LeveredTaxPeriod,
     LeveredTaxSchedule,
+    ScheduleRunner,
+    TaxCircularityError,
     TaxPolicy,
     TaxPolicyError,
+    levered_schedule,
     levered_tax,
     levered_tax_for_model,
     levered_tax_schedule,
+    solve_levered,
 )
 from .transaction import (
     DebtFunding,
@@ -130,11 +179,15 @@ __version__ = "0.1.0"
 
 __all__ = [
     "DEFAULT_INTEREST_LIMIT_RATE",
+    "DEFAULT_SOLVE_TOLERANCE",
+    "ONE",
+    "ZERO",
     "AcquiredStream",
     "AddOn",
     "AddOnError",
     "AddOnOutcome",
     "AmbiguousIRRError",
+    "AmortisationBasis",
     "Attribution",
     "Axis",
     "BalanceSheetError",
@@ -145,6 +198,7 @@ __all__ = [
     "CashFlow",
     "CashFlowStream",
     "Cell",
+    "Certification",
     "CircularityError",
     "Covenant",
     "CovenantObservation",
@@ -155,6 +209,7 @@ __all__ = [
     "DebtFunding",
     "DebtPeriod",
     "DebtSchedule",
+    "DidNotConvergeError",
     "Dimension",
     "Direction",
     "Distribution",
@@ -164,6 +219,9 @@ __all__ = [
     "EntryValuation",
     "EquityPlan",
     "ExitValuation",
+    "FeeMethod",
+    "FeePeriod",
+    "FeeSchedule",
     "Frequency",
     "Funding",
     "Grid",
@@ -173,13 +231,16 @@ __all__ = [
     "InterestBasis",
     "InterestDeduction",
     "InterestLimit",
+    "LeveredSolution",
     "LeveredTaxPeriod",
     "LeveredTaxSchedule",
+    "Line",
     "LineItem",
     "Measure",
     "Metric",
     "Money",
     "NoSignChangeError",
+    "Numeric",
     "OpeningBalanceSheet",
     "OperatingAssumptions",
     "OperatingModel",
@@ -199,6 +260,7 @@ __all__ = [
     "RefinancingError",
     "RefinancingOutcome",
     "Report",
+    "ScheduleRunner",
     "Section",
     "Security",
     "SecurityKind",
@@ -208,11 +270,15 @@ __all__ = [
     "SourcesAndUses",
     "SweepGrid",
     "SweepStep",
+    "Table",
     "TargetBookBalanceSheet",
+    "TaxCircularityError",
     "TaxPolicy",
     "TaxPolicyError",
     "TaxResult",
+    "TrailingWindow",
     "Tranche",
+    "TrancheFees",
     "TrancheKind",
     "TranchePeriod",
     "Transaction",
@@ -221,11 +287,21 @@ __all__ = [
     "Unit",
     "Vesting",
     "__version__",
+    "add_months",
     "allocate_pro_rata",
     "apply_carryforward",
+    "brent_root",
     "cagr",
+    "compounded_over",
+    "days_between",
     "default_securities",
+    "effective_rate",
+    "end_of_month",
+    "format_value",
     "irr_periodic",
+    "is_close",
+    "is_leap_year",
+    "levered_schedule",
     "levered_tax",
     "levered_tax_for_model",
     "levered_tax_schedule",
@@ -234,10 +310,17 @@ __all__ = [
     "money",
     "npv_periodic",
     "parse_deal",
+    "prepare",
     "quantize",
     "rate",
     "rescale",
+    "safe_div",
     "settle_pool",
     "solve",
+    "solve_levered",
+    "to_float",
+    "trailing_window",
+    "within_year_weights",
+    "written",
     "year_fraction",
 ]
