@@ -473,3 +473,21 @@ monthly ones, and two things stop them being trustworthy on a leveraged deal.
       so `tolerance=tolerance` forwarded down a call chain reads as a caller
       choosing. Keying supply on the owning callable raises the count here from
       one to twenty-four, and that stricter probe is its own piece of work
+
+## Phase 21 — What the modules declare, the package carries
+
+- [x] `fees` wired into the package root: it had no import line in
+      `__init__.py`, so `Deal.fee_schedule` took a `FeeMethod` and returned a
+      `FeeSchedule` and neither could be named from `import capstack`
+- [x] The other 29 names ten modules declared public and the root dropped,
+      among them `Numeric`, `LeveredSolution`, `solve_levered`, and
+      `TaxCircularityError`, which `Deal.levered` raises and so could not be
+      caught by name
+- [x] `tests/test_surface.py`, recomputing the surface from each module's own
+      `__all__`: every declared name at the root, a missing module reported as a
+      module, every root entry present and listed once, and every module
+      carrying an `__all__` at all
+- [x] The symptom checked directly: a capstack type in the signature of
+      anything reachable from the root is itself reachable from the root. On the
+      previous root it reported seven signatures, two returning a
+      `TrailingWindow` and a third taking one
