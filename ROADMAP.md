@@ -512,3 +512,25 @@ monthly ones, and two things stop them being trustworthy on a leveraged deal.
 - [x] Two cases the equality cannot see, each its own check: one name declared
       by two modules, and a public name bound inside a top-level block where
       the probe does not look
+
+## Phase 23 — The two day-count options, chosen
+
+- [x] `Outcome.realise(convention=)` and `OperatingModel.project(day_count=)`,
+      the two options that select a convention and had only ever run at
+      ACT/365F, traced first: each is read at every site that needs it, and
+      nothing re-measures a stub or a holding period on a default later
+- [x] Both chosen with each of the other three conventions and checked against
+      identities rather than "the number moved": the money multiple identical to
+      the last digit, the holding period the convention's year fraction, the
+      rate compounding to the multiple over that count of years, the preferred
+      claim moving by exactly 1.08 to the extra years, and value moved between
+      holders with none created
+- [x] A stub carries its convention's share of a year — an ACT/360 stub exactly
+      365/360 of an ACT/365F one — while every whole period stays identical
+- [x] The blind case named and closed: ACT/ACT ISDA counts a stub inside a
+      365-day year exactly as ACT/365F does, so it is seen only on a stub inside
+      a leap year, and both facts are tests
+- [x] Four breaks, each putting one site back on the default — the rate, the
+      accrual, the holding period, the stub — fail 7, 6, 10 and 6 tests
+- [ ] The rest of the options keyed on their owning callable, not their
+      parameter name alone; twenty-one remain behind that
