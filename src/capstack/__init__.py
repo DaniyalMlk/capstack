@@ -41,6 +41,7 @@ from .events import (
     RefinancingError,
     RefinancingOutcome,
 )
+from .fees import FeeMethod, FeePeriod, FeeSchedule, TrancheFees, effective_rate
 from .incentive import (
     IncentiveError,
     OptionPool,
@@ -164,6 +165,9 @@ __all__ = [
     "EntryValuation",
     "EquityPlan",
     "ExitValuation",
+    "FeeMethod",
+    "FeePeriod",
+    "FeeSchedule",
     "Frequency",
     "Funding",
     "Grid",
@@ -213,6 +217,7 @@ __all__ = [
     "TaxPolicyError",
     "TaxResult",
     "Tranche",
+    "TrancheFees",
     "TrancheKind",
     "TranchePeriod",
     "Transaction",
@@ -225,6 +230,7 @@ __all__ = [
     "apply_carryforward",
     "cagr",
     "default_securities",
+    "effective_rate",
     "irr_periodic",
     "levered_tax",
     "levered_tax_for_model",
