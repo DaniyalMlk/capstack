@@ -35,6 +35,7 @@ from .money import ONE, ZERO, Money, Numeric, money, safe_div
 from .periods import Period, PeriodGrid, TrailingWindow, trailing_window
 
 __all__ = [
+    "DEFAULT_NOL_USAGE_LIMIT",
     "AcquiredStream",
     "OperatingAssumptions",
     "OperatingModel",

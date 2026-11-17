@@ -19,7 +19,9 @@ from collections.abc import Sequence
 from decimal import ROUND_HALF_EVEN, Context, Decimal, InvalidOperation, setcontext
 
 __all__ = [
+    "DISPLAY_ROUNDING",
     "ONE",
+    "PRECISION",
     "ZERO",
     "Money",
     "Numeric",
@@ -28,6 +30,7 @@ __all__ = [
     "money",
     "quantize",
     "rate",
+    "rescale",
     "safe_div",
     "to_float",
     "written",

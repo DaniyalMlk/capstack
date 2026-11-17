@@ -37,6 +37,9 @@ from .daycount import DayCount, year_fraction
 from .money import ZERO, Money, Numeric, money, to_float
 
 __all__ = [
+    "RATE_CEILING",
+    "RATE_FLOOR",
+    "RTOL_FLOOR",
     "AmbiguousIRRError",
     "CashFlow",
     "CashFlowStream",

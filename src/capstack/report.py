@@ -49,7 +49,16 @@ from .sensitivity import (
 )
 from .spec import Deal
 
-__all__ = ["Line", "Report", "Section", "Table", "prepare"]
+__all__ = [
+    "EXIT_MULTIPLE_BRACKET",
+    "LEVERAGE_BRACKET",
+    "MARGIN_SHIFT_BRACKET",
+    "Line",
+    "Report",
+    "Section",
+    "Table",
+    "prepare",
+]
 
 #: Where each break-even is looked for. Wide enough to hold the answer for any
 #: deal that is recognisably a buyout, and bounded, because a search that

@@ -54,6 +54,7 @@ from dataclasses import dataclass
 from .money import ONE, ZERO, Money, Numeric, is_close, money, safe_div
 
 __all__ = [
+    "FULLY_VESTED",
     "IncentiveError",
     "OptionPool",
     "PoolOutcome",

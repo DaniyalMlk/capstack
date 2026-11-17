@@ -45,7 +45,7 @@ from enum import Enum
 from .covenants import CovenantReport
 from .debt import CircularityError, DebtSchedule
 from .drivers import Driver
-from .money import ONE, ZERO, Money, money, quantize, rescale, safe_div
+from .money import ZERO, Money, money, quantize, rescale, safe_div
 from .operating import OperatingAssumptions, OperatingModel
 from .outcome import Outcome
 from .periods import PeriodGrid
@@ -53,6 +53,8 @@ from .spec import Deal
 from .tax import EarningsBase, InterestLimit, LeveredSolution
 
 __all__ = [
+    "BISECTION_STEPS",
+    "CELL_FAILURES",
     "Axis",
     "Breakeven",
     "Case",
@@ -931,10 +933,3 @@ def _found(
         high=high,
         value=value,
     )
-
-
-#: A neutral shift, named because ``money(0)`` at a call site reads as an amount.
-NO_SHIFT: Money = ZERO
-
-#: A multiple of one, for the same reason.
-UNCHANGED: Money = ONE

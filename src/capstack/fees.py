@@ -46,10 +46,13 @@ from .money import ZERO, Money, Numeric, is_close, money, safe_div
 from .returns import brent_root
 
 __all__ = [
+    "MAXIMUM_PERIOD_RATE",
+    "SOLVE_TOLERANCE",
     "FeeMethod",
     "FeePeriod",
     "FeeSchedule",
     "TrancheFees",
+    "contractual_profile",
     "effective_rate",
 ]
 

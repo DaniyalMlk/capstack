@@ -68,6 +68,8 @@ from .operating import OperatingModel
 from .periods import Period, trailing_window
 
 __all__ = [
+    "MINIMUM_DAMPING",
+    "RECONCILIATION_TOLERANCE",
     "AmortisationBasis",
     "CapitalStructure",
     "CircularityError",

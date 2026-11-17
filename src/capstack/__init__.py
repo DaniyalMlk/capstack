@@ -8,6 +8,10 @@ from .balance_sheet import (
     UnbalancedBalanceSheetError,
 )
 from .covenants import (
+    DENOMINATOR_COLLAPSED,
+    NO_YEAR_YET,
+    NOTHING_AT_RISK,
+    TEST_INTERVAL_MONTHS,
     Certification,
     Covenant,
     CovenantObservation,
@@ -22,6 +26,8 @@ from .daycount import (
     year_fraction,
 )
 from .debt import (
+    MINIMUM_DAMPING,
+    RECONCILIATION_TOLERANCE,
     AmortisationBasis,
     CapitalStructure,
     CircularityError,
@@ -52,8 +58,18 @@ from .events import (
     RefinancingError,
     RefinancingOutcome,
 )
-from .fees import FeeMethod, FeePeriod, FeeSchedule, TrancheFees, effective_rate
+from .fees import (
+    MAXIMUM_PERIOD_RATE,
+    SOLVE_TOLERANCE,
+    FeeMethod,
+    FeePeriod,
+    FeeSchedule,
+    TrancheFees,
+    contractual_profile,
+    effective_rate,
+)
 from .incentive import (
+    FULLY_VESTED,
     IncentiveError,
     OptionPool,
     PoolOutcome,
@@ -63,7 +79,9 @@ from .incentive import (
     settle_pool,
 )
 from .money import (
+    DISPLAY_ROUNDING,
     ONE,
+    PRECISION,
     ZERO,
     Money,
     Numeric,
@@ -78,6 +96,7 @@ from .money import (
     written,
 )
 from .operating import (
+    DEFAULT_NOL_USAGE_LIMIT,
     AcquiredStream,
     OperatingAssumptions,
     OperatingModel,
@@ -90,6 +109,7 @@ from .outcome import (
     Distribution,
     ExitValuation,
     Outcome,
+    Rate,
     Security,
     SecurityKind,
     SecurityOutcome,
@@ -105,6 +125,9 @@ from .periods import (
     trailing_window,
 )
 from .report import (
+    EXIT_MULTIPLE_BRACKET,
+    LEVERAGE_BRACKET,
+    MARGIN_SHIFT_BRACKET,
     Line,
     Report,
     Section,
@@ -112,6 +135,9 @@ from .report import (
     prepare,
 )
 from .returns import (
+    RATE_CEILING,
+    RATE_FLOOR,
+    RTOL_FLOOR,
     AmbiguousIRRError,
     CashFlow,
     CashFlowStream,
@@ -125,6 +151,8 @@ from .returns import (
     npv_periodic,
 )
 from .sensitivity import (
+    BISECTION_STEPS,
+    CELL_FAILURES,
     Axis,
     Breakeven,
     Case,
@@ -138,6 +166,7 @@ from .sensitivity import (
     solve,
 )
 from .spec import (
+    ZERO_RATE,
     Deal,
     DealSpecError,
     EquityPlan,
@@ -150,6 +179,7 @@ from .spec import (
 from .tax import (
     DEFAULT_INTEREST_LIMIT_RATE,
     DEFAULT_SOLVE_TOLERANCE,
+    MAX_SOLVE_ITERATIONS,
     EarningsBase,
     InterestDeduction,
     InterestLimit,
@@ -167,6 +197,15 @@ from .tax import (
     solve_levered,
 )
 from .transaction import (
+    CASH_FROM_BALANCE_SHEET,
+    CASH_TO_BALANCE_SHEET,
+    EQUITY_PURCHASE_PRICE,
+    FINANCING_FEES,
+    ORIGINAL_ISSUE_DISCOUNT,
+    REFINANCE_EXISTING_DEBT,
+    ROLLOVER_EQUITY,
+    SPONSOR_EQUITY,
+    TRANSACTION_FEES,
     DebtFunding,
     EntryValuation,
     LineItem,
@@ -178,10 +217,41 @@ from .transaction import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "BISECTION_STEPS",
+    "CASH_FROM_BALANCE_SHEET",
+    "CASH_TO_BALANCE_SHEET",
+    "CELL_FAILURES",
     "DEFAULT_INTEREST_LIMIT_RATE",
+    "DEFAULT_NOL_USAGE_LIMIT",
     "DEFAULT_SOLVE_TOLERANCE",
+    "DENOMINATOR_COLLAPSED",
+    "DISPLAY_ROUNDING",
+    "EQUITY_PURCHASE_PRICE",
+    "EXIT_MULTIPLE_BRACKET",
+    "FINANCING_FEES",
+    "FULLY_VESTED",
+    "LEVERAGE_BRACKET",
+    "MARGIN_SHIFT_BRACKET",
+    "MAXIMUM_PERIOD_RATE",
+    "MAX_SOLVE_ITERATIONS",
+    "MINIMUM_DAMPING",
+    "NOTHING_AT_RISK",
+    "NO_YEAR_YET",
     "ONE",
+    "ORIGINAL_ISSUE_DISCOUNT",
+    "PRECISION",
+    "RATE_CEILING",
+    "RATE_FLOOR",
+    "RECONCILIATION_TOLERANCE",
+    "REFINANCE_EXISTING_DEBT",
+    "ROLLOVER_EQUITY",
+    "RTOL_FLOOR",
+    "SOLVE_TOLERANCE",
+    "SPONSOR_EQUITY",
+    "TEST_INTERVAL_MONTHS",
+    "TRANSACTION_FEES",
     "ZERO",
+    "ZERO_RATE",
     "AcquiredStream",
     "AddOn",
     "AddOnError",
@@ -253,6 +323,7 @@ __all__ = [
     "PurchaseAccounting",
     "Ratchet",
     "RatchetBand",
+    "Rate",
     "Recapitalisation",
     "RecapitalisationError",
     "RecapitalisationOutcome",
@@ -293,6 +364,7 @@ __all__ = [
     "brent_root",
     "cagr",
     "compounded_over",
+    "contractual_profile",
     "days_between",
     "default_securities",
     "effective_rate",
