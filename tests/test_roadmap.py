@@ -140,8 +140,15 @@ def test_every_reference_points_backwards_or_is_a_resolution_note(roadmap: str) 
 
 
 def test_the_probe_reads_the_two_resolution_notes(roadmap: str) -> None:
-    """The only references in the roadmap are the two notes, both forward."""
-    assert cross_references(roadmap) == [(9, 10, True), (10, 11, True)]
+    """The two resolution notes, forward, and phase 24's backward references."""
+    assert cross_references(roadmap) == [
+        (9, 10, True),
+        (10, 11, True),
+        (24, 12, False),
+        (24, 12, False),
+        (24, 9, False),
+        (24, 10, False),
+    ]
 
 
 # --- the rules against text built for them -------------------------------- #

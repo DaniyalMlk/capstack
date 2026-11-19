@@ -534,3 +534,20 @@ monthly ones, and two things stop them being trustworthy on a leveraged deal.
       accrual, the holding period, the stub — fail 7, 6, 10 and 6 tests
 - [ ] The rest of the options keyed on their owning callable, not their
       parameter name alone; twenty-one remain behind that
+
+## Phase 24 — The roadmap is read
+
+Phase 12's first-release item stayed open after `capstack-lbo` 0.1.0 was on the
+index, because nothing read the roadmap.
+
+- [x] The release recorded under phase 12, and pinned as recorded, since a
+      published version is permanent
+- [x] No open item allowed to mention a release, however worded; the two
+      items still open are a decision and real work, and are left alone
+- [x] The numbering held to no duplicate, no gap and no descent
+- [x] Every cross-reference naming a phase that exists and pointing backwards,
+      unless it is a note saying where a deferred item was settled — the two
+      in phases 9 and 10 are that, on purpose, and a rule demanding strictly
+      backward references would have called them slips
+- [x] `main`'s roadmap, a resolution note reworded into a plain forward
+      reference, and a duplicated phase number, each confirmed to fail first
