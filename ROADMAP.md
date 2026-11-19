@@ -219,8 +219,8 @@ monthly ones, and two things stop them being trustworthy on a leveraged deal.
 - [x] `examples` inside the mypy scope, since a script that decides whether a
       release is honest should be held to the standard of the library it
       measures
-- [ ] A first release on the index, which waits on the publisher being
-      registered there for this project
+- [x] A first release on the index: `capstack-lbo` 0.1.0, wheel and sdist,
+      published by the tag-driven workflow once the publisher was registered
 
 ## Phase 13 — Tax the business as it is actually financed
 
