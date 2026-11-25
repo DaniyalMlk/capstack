@@ -52,6 +52,7 @@ import ast
 import importlib
 import inspect
 import pkgutil
+import textwrap
 import typing
 from collections import Counter
 from collections.abc import Callable, Iterator
@@ -157,17 +158,177 @@ def public_definitions(module: str) -> frozenset[str]:
     return public_names_in(source.read_text(encoding="utf-8"))
 
 
-def package_types_in(hint: object) -> set[type]:
-    """Every capstack class mentioned anywhere inside a type annotation."""
+def package_types_in(hint: object, prefix: str = "capstack.") -> set[type]:
+    """Every capstack class mentioned anywhere inside a type annotation.
+
+    ``typing.get_args(Callable[[A], B])`` is ``([A], B)``: a callable's
+    parameters arrive as a plain list, which is not a hint and has no arguments
+    of its own, so a walk that only recurses through ``get_args`` never looks
+    inside it. Without the first branch, a class used only as a callback's
+    parameter was invisible here.
+    """
+    if isinstance(hint, list | tuple):
+        return set().union(*(package_types_in(item, prefix) for item in hint))
     found: set[type] = set()
-    if isinstance(hint, type) and hint.__module__.startswith("capstack."):
+    if isinstance(hint, type) and hint.__module__.startswith(prefix):
         found.add(hint)
     origin = typing.get_origin(hint)
-    if isinstance(origin, type) and origin.__module__.startswith("capstack."):
+    if isinstance(origin, type) and origin.__module__.startswith(prefix):
         found.add(origin)
     for argument in typing.get_args(hint):
-        found |= package_types_in(argument)
+        found |= package_types_in(argument, prefix)
     return found
+
+
+#: Subscripted names that make a module-level assignment a type expression.
+TYPE_CONSTRUCTORS = frozenset(
+    {
+        "Annotated",
+        "Callable",
+        "Iterable",
+        "Literal",
+        "Mapping",
+        "Optional",
+        "Sequence",
+        "Union",
+        "dict",
+        "frozenset",
+        "list",
+        "set",
+        "tuple",
+        "type",
+    }
+)
+
+
+def _is_type_expression(node: ast.expr) -> bool:
+    """Whether a right-hand side reads as a type rather than a value."""
+    if isinstance(node, ast.Subscript):
+        value = node.value
+        name = value.id if isinstance(value, ast.Name) else getattr(value, "attr", None)
+        return name in TYPE_CONSTRUCTORS
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        # ``int | str`` and ``Decimal | None`` are types; ``1 | 2`` is a number.
+        return all(_is_type_operand(side) for side in (node.left, node.right))
+    return False
+
+
+def _is_type_operand(node: ast.expr) -> bool:
+    if isinstance(node, ast.Constant):
+        return node.value is None
+    return isinstance(node, ast.Name | ast.Attribute) or _is_type_expression(node)
+
+
+def aliases_in(source: str) -> frozenset[str]:
+    """The public module-level names a source file binds to a type expression.
+
+    ``X: TypeAlias = ...`` always counts. A plain assignment counts when its
+    value is a subscripted type constructor or a ``|`` union of types. A
+    number, a string, a call or a bare name does not -- so ``Money = Decimal``,
+    a second name for a class the walk above already sees, is not one.
+    """
+    found: set[str] = set()
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if "TypeAlias" in ast.unparse(node.annotation):
+                found.add(node.target.id)
+        elif isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            if isinstance(target, ast.Name) and _is_type_expression(node.value):
+                found.add(target.id)
+    return frozenset(name for name in found if not name.startswith("_"))
+
+
+def names_in_annotation(node: ast.expr) -> frozenset[str]:
+    """Every bare name an annotation spells, including inside a string."""
+    found: set[str] = set()
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name):
+            found.add(child.id)
+        elif isinstance(child, ast.Constant) and isinstance(child.value, str):
+            try:
+                inner = ast.parse(child.value, mode="eval")
+            except SyntaxError:
+                continue
+            found |= names_in_annotation(inner.body)
+    return frozenset(found)
+
+
+def public_annotations(function: ast.FunctionDef | ast.AsyncFunctionDef) -> list[ast.expr]:
+    """The annotations of a function's public parameters and its return."""
+    arguments = function.args
+    parameters = [
+        *arguments.posonlyargs,
+        *arguments.args,
+        *arguments.kwonlyargs,
+        *(argument for argument in (arguments.vararg, arguments.kwarg) if argument is not None),
+    ]
+    found = [
+        parameter.annotation
+        for parameter in parameters
+        if parameter.annotation is not None and not parameter.arg.startswith("_")
+    ]
+    if function.returns is not None:
+        found.append(function.returns)
+    return found
+
+
+def field_annotations(cls: ast.ClassDef) -> list[ast.expr]:
+    """The annotations of a class body's public fields."""
+    return [
+        node.annotation
+        for node in cls.body
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and not node.target.id.startswith("_")
+    ]
+
+
+def package_aliases() -> dict[str, list[object]]:
+    """Each public alias name in the package, with every object bound to it."""
+    found: dict[str, list[object]] = {}
+    for module in submodules().values():
+        assert module.__file__ is not None
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        for alias in aliases_in(source):
+            found.setdefault(alias, []).append(getattr(module, alias))
+    return found
+
+
+def _source_node(obj: object) -> ast.stmt | None:
+    """The parsed definition of a function or class; ``None`` if it has none."""
+    try:
+        source = textwrap.dedent(inspect.getsource(obj))  # type: ignore[arg-type]
+    except (OSError, TypeError):
+        # A dataclass's generated ``__init__`` has no source; its fields are
+        # read through the class body instead.
+        return None
+    return ast.parse(source).body[0]
+
+
+def unreachable_aliases(root: frozenset[str]) -> dict[str, list[str]]:
+    """Reachable signatures and fields spelled with an alias the root lacks."""
+    aliases = package_aliases()
+    bound = {name: getattr(capstack, name) for name in root}
+    missing: dict[str, set[str]] = {}
+
+    def note(label: str, annotations: list[ast.expr]) -> None:
+        for annotation in annotations:
+            for name in names_in_annotation(annotation) & aliases.keys():
+                if not any(bound.get(name) is value for value in aliases[name]):
+                    missing.setdefault(name, set()).add(label)
+
+    for label, function in root_callables(root):
+        node = _source_node(function)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            note(label, public_annotations(node))
+    for name in sorted(root):
+        obj = getattr(capstack, name)
+        if inspect.isclass(obj) and obj.__module__.startswith("capstack."):
+            node = _source_node(obj)
+            if isinstance(node, ast.ClassDef):
+                note(f"{name} (fields)", field_annotations(node))
+    return {alias: sorted(labels) for alias, labels in sorted(missing.items())}
 
 
 def root_callables(root: frozenset[str]) -> Iterator[tuple[str, Callable[..., object]]]:
@@ -242,6 +403,23 @@ def test_a_type_in_a_reachable_signature_is_itself_reachable(root: frozenset[str
     unreachable = unreachable_signature_types(root)
     assert not unreachable, (
         f"reachable from capstack, written in types capstack does not export: {unreachable}"
+    )
+
+
+def test_an_alias_a_reachable_signature_is_written_in_is_itself_reachable(
+    root: frozenset[str],
+) -> None:
+    """The half of the rule above that resolved hints cannot see.
+
+    ``typing.get_type_hints`` expands ``Numeric`` into
+    ``int | str | float | Decimal`` before anything looks at it, so the check
+    above passes whether or not the root carries the alias a signature is
+    spelled with. Aliases are read from source instead, and compared by
+    identity with what the root binds.
+    """
+    unreachable = unreachable_aliases(root)
+    assert not unreachable, (
+        f"reachable from capstack, written in aliases it does not export: {unreachable}"
     )
 
 
@@ -405,3 +583,108 @@ def test_the_annotation_walk_finds_types_nested_inside_others() -> None:
     assert package_types_in(nested) == {FeeSchedule, Deal}
     assert package_types_in(FeeMethod | None) == {FeeMethod}
     assert package_types_in(int | str | list[float]) == set()
+
+
+# The signature probe's own rules, against source and hints written for each,
+# since the package's own signatures do not exercise every branch.
+
+
+class _Local:
+    """A class this module defines, standing in for a package class."""
+
+
+def test_the_alias_survey_finds_the_aliases_there_are() -> None:
+    """The alias check passes vacuously if the survey stops finding any."""
+    assert {"Numeric", "ScheduleRunner"} <= package_aliases().keys()
+
+
+def test_the_alias_check_reads_signatures_written_in_them(root: frozenset[str]) -> None:
+    """The check is pointed at real annotations, not only at an empty set."""
+    spelled: set[str] = set()
+    for _, function in root_callables(root):
+        node = _source_node(function)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            for annotation in public_annotations(node):
+                spelled |= names_in_annotation(annotation)
+    assert {"Numeric", "ScheduleRunner"} <= spelled
+
+
+def test_classes_are_found_inside_every_kind_of_hint() -> None:
+    prefix = _Local.__module__
+    hints: list[object] = [
+        _Local,
+        list[_Local],
+        _Local | None,
+        dict[str, tuple[int, _Local]],
+        type[_Local],
+        Callable[[_Local], float],
+        Callable[[int, _Local], None],
+        Callable[[Callable[[_Local], float]], float],
+    ]
+    for hint in hints:
+        assert package_types_in(hint, prefix) == {_Local}, hint
+
+
+def test_classes_outside_the_package_are_not_found() -> None:
+    assert package_types_in(list[int] | dict[str, float] | None) == set()
+    assert package_types_in(Callable[[int], str]) == set()
+
+
+def test_aliases_are_the_assignments_that_read_as_types() -> None:
+    source = textwrap.dedent(
+        """
+        from typing import Literal, TypeAlias
+        Numeric = int | str | float | Decimal
+        Runner = Callable[[Sequence[Money]], DebtSchedule]
+        Side = Literal["cash", "pik"]
+        Maybe = Decimal | None
+        Explicit: TypeAlias = "dict[str, Decimal]"
+        _Private = list[int]
+        """
+    )
+    assert aliases_in(source) == {"Numeric", "Runner", "Side", "Maybe", "Explicit"}
+
+
+def test_values_are_not_aliases() -> None:
+    source = textwrap.dedent(
+        """
+        Money = Decimal
+        ZERO = Decimal("0")
+        LABEL = "Sponsor equity"
+        BRACKET = (1, 30)
+        FLAGS = 1 | 2
+        TABLE = {"a": 1}
+        LOOKUP = mapping["key"]
+        count: int = 3
+
+        def f():
+            Local = list[float]
+        """
+    )
+    assert aliases_in(source) == set()
+
+
+def test_annotation_names_reach_into_subscripts_and_strings() -> None:
+    node = ast.parse("x: 'dict[str, Sequence[Numeric]] | None'").body[0]
+    assert isinstance(node, ast.AnnAssign)
+    assert names_in_annotation(node.annotation) == {"dict", "str", "Sequence", "Numeric"}
+    broken = ast.parse("x: 'not a [type'").body[0]
+    assert isinstance(broken, ast.AnnAssign)
+    assert names_in_annotation(broken.annotation) == set()
+
+
+def test_public_annotations_skip_private_parameters_and_keep_the_return() -> None:
+    node = ast.parse(
+        "def f(a: A, /, b: B, *args: C, _c: Hidden, d: D = 1, e=2, **kw: E) -> R: ..."
+    ).body[0]
+    assert isinstance(node, ast.FunctionDef)
+    spelled = {ast.unparse(annotation) for annotation in public_annotations(node)}
+    assert spelled == {"A", "B", "C", "D", "E", "R"}
+
+
+def test_field_annotations_skip_private_fields_and_methods() -> None:
+    node = ast.parse(
+        "class C:\n    a: A\n    _b: Hidden\n    c = 1\n    def m(self) -> R: ...\n"
+    ).body[0]
+    assert isinstance(node, ast.ClassDef)
+    assert [ast.unparse(annotation) for annotation in field_annotations(node)] == ["A"]
