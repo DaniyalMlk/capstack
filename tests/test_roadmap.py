@@ -140,7 +140,11 @@ def test_every_reference_points_backwards_or_is_a_resolution_note(roadmap: str) 
 
 
 def test_the_probe_reads_the_two_resolution_notes(roadmap: str) -> None:
-    """The two resolution notes, forward, and phase 24's backward references."""
+    """The two resolution notes, forward, and the backward references after.
+
+    Phase 24 names phases 12, 9 and 10; phase 25 names phase 22, whose check it
+    repairs.
+    """
     assert cross_references(roadmap) == [
         (9, 10, True),
         (10, 11, True),
@@ -148,6 +152,7 @@ def test_the_probe_reads_the_two_resolution_notes(roadmap: str) -> None:
         (24, 12, False),
         (24, 9, False),
         (24, 10, False),
+        (25, 22, False),
     ]
 
 
