@@ -551,3 +551,26 @@ index, because nothing read the roadmap.
       backward references would have called them slips
 - [x] `main`'s roadmap, a resolution note reworded into a plain forward
       reference, and a duplicated phase number, each confirmed to fail first
+
+## Phase 25 — The signature check, seen to see
+
+Phase 22's check that a type in a reachable signature is itself reachable read
+resolved hints, and resolving a hint destroys two things it needed. An alias is
+expanded before anything can look at it, so the root could drop `Numeric` or
+`ScheduleRunner` and the check would pass. And `typing.get_args` returns a
+callable's parameters as a plain list that the walk never entered. Neither hid
+anything here; both were found where the same probe runs in `abacus`, where the
+first was hiding two types.
+
+- [x] The walk enters a callable's parameter list, so a class used only as a
+      callback's parameter is seen
+- [x] Aliases read from source and compared by identity with what the root
+      binds, over every reachable signature and every field of a root class
+- [x] The survey asserted non-empty, and the two aliases shown to be spelled in
+      real signatures, so the check cannot pass by reading nothing
+- [x] The probe's rules tested against source written for each, including that
+      `Money = Decimal` is a second name for a class and not an alias
+- [x] An alias dropped from the root, a different object bound to its name, a
+      private class inside `brent_root`'s callback, and the probe made blind
+      again, each confirmed to fail first
+
